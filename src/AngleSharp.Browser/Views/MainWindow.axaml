@@ -1,0 +1,81 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:AngleSharp.Browser.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        x:Class="AngleSharp.Browser.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Icon="/Assets/avalonia-logo.ico"
+    Title="AngleSharp.Browser"
+    Width="1200"
+    Height="800"
+    MinWidth="800"
+    MinHeight="500">
+
+    <Design.DataContext>
+        <!-- This only sets the DataContext for the previewer in an IDE,
+             to set the actual DataContext for runtime, set the DataContext property in code (look at App.axaml.cs) -->
+        <vm:MainViewModel />
+    </Design.DataContext>
+
+    <Grid RowDefinitions="Auto,*">
+        <Border Grid.Row="0"
+                Background="#F4F6F8"
+                BorderBrush="#D8DEE6"
+                BorderThickness="0,0,0,1"
+                Padding="12,10">
+            <Grid ColumnDefinitions="Auto,*,Auto"
+                  ColumnSpacing="10"
+                  VerticalAlignment="Center">
+                <TextBlock Grid.Column="0"
+                           Text="URL"
+                           VerticalAlignment="Center"
+                           Foreground="#556172"
+                           FontWeight="SemiBold" />
+
+                <TextBox Grid.Column="1"
+                         PlaceholderText="Enter a website and press Enter"
+                         Text="{Binding Address, UpdateSourceTrigger=PropertyChanged}"
+                         VerticalAlignment="Center">
+                    <TextBox.KeyBindings>
+                        <KeyBinding Gesture="Enter" Command="{Binding NavigateCommand}" />
+                    </TextBox.KeyBindings>
+                </TextBox>
+
+                <Button Grid.Column="2"
+                        Content="Go"
+                        MinWidth="72"
+                    Command="{Binding NavigateCommand}" />
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" RowDefinitions="Auto,*">
+            <Border Grid.Row="0"
+                    Padding="12,8"
+                    Background="#FAFBFC"
+                    BorderBrush="#E2E8EF"
+                    BorderThickness="0,0,0,1">
+                <TextBlock Text="{Binding Status}"
+                           Foreground="#5A6574" />
+            </Border>
+
+            <Border Grid.Row="1"
+                    Margin="12"
+                    BorderBrush="#CDD6E0"
+                    BorderThickness="1"
+                    CornerRadius="6"
+                    Background="White"
+                    ClipToBounds="True">
+                <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                              VerticalScrollBarVisibility="Auto">
+                    <Image Source="{Binding PageImage}"
+                           Stretch="None"
+                           HorizontalAlignment="Left"
+                           VerticalAlignment="Top" />
+                </ScrollViewer>
+            </Border>
+        </Grid>
+    </Grid>
+
+</Window>
