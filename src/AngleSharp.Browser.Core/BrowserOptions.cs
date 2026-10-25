@@ -1,0 +1,91 @@
+namespace AngleSharp.Browser;
+
+using System;
+using AngleSharp.Io;
+using AngleSharp.Io.Dom;
+
+/// <summary>
+/// Options for creating a <see cref="BrowserEngine"/>. Everything that
+/// touches the outside world (persistence, clipboard, user agent, ...) is
+/// configured from here.
+/// </summary>
+public sealed class BrowserOptions
+{
+    /// <summary>
+    /// Gets or sets the directory where cookies, the web storage and the
+    /// HTTP cache are persisted. If null, all data is kept in memory only.
+    /// </summary>
+    public string? ProfileDirectory { get; set; }
+
+    /// <summary>
+    /// Gets or sets the user agent to report. If null, the default of
+    /// AngleSharp.Io is used.
+    /// </summary>
+    public string? UserAgent { get; set; }
+
+    /// <summary>
+    /// Gets or sets if JavaScript should be evaluated.
+    /// </summary>
+    public bool IsScriptingEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets the clipboard integration exposed to the page. If null,
+    /// the clipboard API is not available.
+    /// </summary>
+    public IClipboardPlatform? ClipboardPlatform { get; set; }
+
+    /// <summary>
+    /// Gets or sets the initial viewport width in CSS pixels.
+    /// </summary>
+    public int ViewportWidth { get; set; } = 1280;
+
+    /// <summary>
+    /// Gets or sets the initial viewport height in CSS pixels.
+    /// </summary>
+    public int ViewportHeight { get; set; } = 800;
+
+    /// <summary>
+    /// Gets or sets the screen width reported to media queries.
+    /// </summary>
+    public int ScreenWidth { get; set; } = 1920;
+
+    /// <summary>
+    /// Gets or sets the screen height reported to media queries.
+    /// </summary>
+    public int ScreenHeight { get; set; } = 1080;
+
+    /// <summary>
+    /// Gets or sets the default font size in CSS pixels.
+    /// </summary>
+    public double FontSize { get; set; } = 16;
+
+    /// <summary>
+    /// Gets or sets a callback to customize the IO options (e.g., the HTTP
+    /// handler, storage or cache factories) after the defaults have been
+    /// derived from the other properties.
+    /// </summary>
+    public Action<IoOptions>? ConfigureIo { get; set; }
+
+    /// <summary>
+    /// Gets or sets a callback to extend or replace the AngleSharp
+    /// configuration before the browsing context is created.
+    /// </summary>
+    public Func<IConfiguration, IConfiguration>? Configure { get; set; }
+
+    internal IoOptions CreateIoOptions()
+    {
+        var options = ProfileDirectory is null
+            ? IoOptions.CreateTemporary()
+            : IoOptions.CreatePersistent(ProfileDirectory);
+
+        options.ClipboardPlatform = ClipboardPlatform;
+
+        if (UserAgent is not null)
+        {
+            options.Navigator.UserAgent = UserAgent;
+        }
+
+        ConfigureIo?.Invoke(options);
+        return options;
+    }
+}

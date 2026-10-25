@@ -1,0 +1,634 @@
+namespace AngleSharp.Browser;
+
+using System;
+using System.IO;
+using System.Linq;
+using System.Net;
+using System.Runtime.ExceptionServices;
+using System.Threading;
+using System.Threading.Tasks;
+using AngleSharp.Browser.Dom;
+using AngleSharp.Css;
+using AngleSharp.Css.Dom;
+using AngleSharp.Dom;
+using AngleSharp.Dom.Events;
+using AngleSharp.Io;
+using AngleSharp.Js;
+using AngleSharp.Renderer;
+using AngleSharp.Renderer.Rendering;
+
+/// <summary>
+/// A UI-agnostic browser: it loads documents, paints the active document
+/// into images and translates user input into DOM interactions. Hosts
+/// (e.g., an Avalonia control) display the painted frames and forward input.
+/// </summary>
+/// <remarks>
+/// All operations touching the DOM are serialized. Events may be raised from
+/// any thread, so hosts need to marshal them to their UI thread.
+/// </remarks>
+public sealed partial class BrowserEngine : IDisposable
+{
+    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromMilliseconds(200);
+    private static readonly TimeSpan SettleDuration = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan InteractionDuration = TimeSpan.FromMilliseconds(600);
+    private static readonly string[] TextContentTypes = [MimeTypeNames.Plain, MimeTypeNames.ApplicationJson, MimeTypeNames.DefaultJavaScript, MimeTypeNames.Css];
+
+    private readonly IBrowsingContext _context;
+    private readonly DefaultRenderDevice _device;
+    private readonly IDomHarness _harness;
+    private readonly IEventLoop? _loop;
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly NavigationHistory _history = new();
+    private readonly Timer _heartbeat;
+    private MutationObserver? _observer;
+    private IDocument? _document;
+    private string _title = string.Empty;
+    private long _animateUntil;
+    private long _lastPaint;
+    private int _loadCount;
+    private int _layoutVersion;
+    private int _scrollExtentVersion = -1;
+    private double _maxScrollTop;
+    private bool _wasReadyForLayout;
+    private volatile bool _isPainting;
+    private volatile bool _isDisposed;
+
+    /// <summary>
+    /// Creates a new browser engine.
+    /// </summary>
+    /// <param name="options">The options to use, if any.</param>
+    public BrowserEngine(BrowserOptions? options = null)
+    {
+        options ??= new BrowserOptions();
+
+        _device = new DefaultRenderDevice
+        {
+            Category = DeviceCategory.Screen,
+            ColorBits = 32,
+            DeviceWidth = options.ScreenWidth,
+            DeviceHeight = options.ScreenHeight,
+            ViewPortWidth = Math.Max(1, options.ViewportWidth),
+            ViewPortHeight = Math.Max(1, options.ViewportHeight),
+            FontSize = options.FontSize,
+            IsScripting = options.IsScriptingEnabled,
+        };
+
+        var ioOptions = options.CreateIoOptions();
+        var config = Configuration.Default
+            .WithEventLoop()
+            .WithRenderDevice(_device)
+            .WithXml()
+            .WithCss()
+            .WithIo(ioOptions)
+            .WithWasm()
+            .WithRendering()
+            .WithDefaultLoader(new LoaderOptions
+            {
+                IsResourceLoadingEnabled = true,
+            });
+
+        if (options.IsScriptingEnabled)
+        {
+            config = config.WithJs();
+        }
+
+        // the top-level context shares the engine's history (window.history), frames get their own
+        var hasTopLevelHistory = false;
+        config = config.With<IHistory>(_ =>
+        {
+            if (hasTopLevelHistory)
+            {
+                return new NavigationHistory();
+            }
+
+            hasTopLevelHistory = true;
+            return _history;
+        });
+        // like in a browser, a script moving through the history continues before anything happens
+        _history.TraversalRequested += delta => _ = Task.Run(() => TraverseAsync(delta, CancellationToken.None));
+        _history.Changed += OnStateChanged;
+
+        if (options.Configure is not null)
+        {
+            config = options.Configure(config);
+        }
+
+        _context = BrowsingContext.New(config);
+
+        // AngleSharp.Io only reports the user agent via the navigator, but some servers refuse requests without one
+        foreach (var requester in _context.GetServices<IRequester>().OfType<BaseRequester>())
+        {
+            requester.Requesting += (_, ev) => AddUserAgent(((RequestEvent)ev).Request, ioOptions.Navigator.UserAgent);
+        }
+
+        if (options.IsScriptingEnabled)
+        {
+            // the default style sheet lacks the rule from the HTML standard (15.3.1)
+            _context.GetService<ICssDefaultStyleSheetProvider>()?.AppendDefault("noscript { display: none !important }");
+        }
+        _harness = _context.GetDomHarness();
+        _loop = _context.GetService<IEventLoop>();
+        _harness.PaintInvalidated += OnPaintInvalidated;
+        _heartbeat = new Timer(OnHeartbeat, null, HeartbeatInterval, HeartbeatInterval);
+    }
+
+    /// <summary>
+    /// Raised when the visual output changed and a new frame should be painted.
+    /// </summary>
+    public event EventHandler? Invalidated;
+
+    /// <summary>
+    /// Raised when the address, title, loading or history state changed.
+    /// </summary>
+    public event EventHandler? StateChanged;
+
+    /// <summary>
+    /// Raised when an operation failed, e.g., a navigation or a script.
+    /// </summary>
+    public event EventHandler<Exception>? Error;
+
+    /// <summary>
+    /// Gets the underlying browsing context.
+    /// </summary>
+    public IBrowsingContext Context => _context;
+
+    /// <summary>
+    /// Gets the currently displayed document, if any.
+    /// </summary>
+    public IDocument? Document => _document;
+
+    /// <summary>
+    /// Gets the address of the currently displayed document.
+    /// </summary>
+    public string? Url => _history.GetUrl(_document) ?? _document?.Url;
+
+    /// <summary>
+    /// Gets the title of the currently displayed document.
+    /// </summary>
+    public string Title => _title;
+
+    /// <summary>
+    /// Gets if a navigation is in progress.
+    /// </summary>
+    public bool IsLoading => Volatile.Read(ref _loadCount) > 0;
+
+    /// <summary>
+    /// Gets if there is a previous entry in the history.
+    /// </summary>
+    public bool CanGoBack
+    {
+        get => _history.CanGoBack;
+    }
+
+    /// <summary>
+    /// Gets if there is a next entry in the history.
+    /// </summary>
+    public bool CanGoForward
+    {
+        get => _history.CanGoForward;
+    }
+
+    /// <summary>
+    /// Gets the width of the viewport in CSS pixels.
+    /// </summary>
+    public int ViewportWidth => _device.ViewPortWidth;
+
+    /// <summary>
+    /// Gets the height of the viewport in CSS pixels.
+    /// </summary>
+    public int ViewportHeight => _device.ViewPortHeight;
+
+    /// <summary>
+    /// Gets the vertical scroll offset of the page.
+    /// </summary>
+    public double ScrollTop => _document?.DocumentElement is IElement root ? _harness.GetScrollTop(root, double.MaxValue) : 0;
+
+    /// <summary>
+    /// Turns user input from an address bar into an absolute address.
+    /// </summary>
+    /// <param name="address">The address as entered by the user.</param>
+    /// <returns>The address to navigate to.</returns>
+    public static string NormalizeAddress(string? address)
+    {
+        var trimmed = address?.Trim() ?? string.Empty;
+
+        if (trimmed.Length == 0)
+        {
+            return "about:blank";
+        }
+
+        if (Path.IsPathRooted(trimmed) && File.Exists(trimmed))
+        {
+            return new Uri(trimmed).AbsoluteUri;
+        }
+
+        if (trimmed.Contains("://", StringComparison.Ordinal) ||
+            trimmed.StartsWith("about:", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        {
+            return trimmed;
+        }
+
+        return $"https://{trimmed}";
+    }
+
+    /// <summary>
+    /// Navigates to the given address.
+    /// </summary>
+    /// <param name="address">The address to load; see <see cref="NormalizeAddress"/>.</param>
+    /// <param name="cancellationToken">The token to cancel loading.</param>
+    public Task NavigateAsync(string address, CancellationToken cancellationToken = default) =>
+        LoadAsync(NormalizeAddress(address), false, cancellationToken);
+
+    /// <summary>
+    /// Loads the given HTML source as a document.
+    /// </summary>
+    /// <param name="html">The source code of the document.</param>
+    /// <param name="address">The address to associate with the document.</param>
+    /// <param name="cancellationToken">The token to cancel loading.</param>
+    public Task LoadHtmlAsync(string html, string address = "about:blank", CancellationToken cancellationToken = default) =>
+        TrackNavigationAsync(() => _context.OpenAsync(res => res.Content(html).Address(address), cancellationToken), address);
+
+    /// <summary>
+    /// Loads the current address again.
+    /// </summary>
+    /// <param name="cancellationToken">The token to cancel loading.</param>
+    public Task ReloadAsync(CancellationToken cancellationToken = default)
+    {
+        var url = _history.Current;
+        return url is null ? Task.CompletedTask : LoadAsync(url, true, cancellationToken);
+    }
+
+    /// <summary>
+    /// Navigates to the previous entry in the history, if any.
+    /// </summary>
+    /// <param name="cancellationToken">The token to cancel loading.</param>
+    public Task GoBackAsync(CancellationToken cancellationToken = default) =>
+        TraverseAsync(-1, cancellationToken);
+
+    /// <summary>
+    /// Navigates to the next entry in the history, if any.
+    /// </summary>
+    /// <param name="cancellationToken">The token to cancel loading.</param>
+    public Task GoForwardAsync(CancellationToken cancellationToken = default) =>
+        TraverseAsync(1, cancellationToken);
+
+    /// <summary>
+    /// Changes the size of the viewport.
+    /// </summary>
+    /// <param name="width">The new width in CSS pixels.</param>
+    /// <param name="height">The new height in CSS pixels.</param>
+    public void Resize(int width, int height)
+    {
+        width = Math.Max(1, width);
+        height = Math.Max(1, height);
+
+        if (_device.ViewPortWidth != width || _device.ViewPortHeight != height)
+        {
+            _device.ViewPortWidth = width;
+            _device.ViewPortHeight = height;
+            OnLayoutChanged();
+        }
+    }
+
+    /// <summary>
+    /// Paints the current document using the current viewport.
+    /// </summary>
+    /// <param name="cancellationToken">The token to cancel waiting for the engine.</param>
+    /// <returns>The painted PNG image or null if no document is available.</returns>
+    public Task<RenderedImage?> PaintAsync(CancellationToken cancellationToken = default) =>
+        RunExclusiveAsync(Paint, cancellationToken);
+
+    /// <summary>
+    /// Runs a script in the current document, like a browser's developer console.
+    /// </summary>
+    /// <param name="script">The JavaScript to run.</param>
+    /// <param name="cancellationToken">The token to cancel waiting for the engine.</param>
+    /// <returns>The script's completion value converted to .NET, or null without a document or scripting.</returns>
+    public Task<object?> EvaluateScriptAsync(string script, CancellationToken cancellationToken = default) =>
+        RunExclusiveAsync(() =>
+        {
+            if (_document is null || !_device.IsScripting)
+            {
+                return null;
+            }
+
+            var result = _document.ExecuteScript(script);
+            Invalidate();
+            return result;
+        }, cancellationToken);
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        if (!_isDisposed)
+        {
+            _isDisposed = true;
+            _heartbeat.Dispose();
+            _harness.PaintInvalidated -= OnPaintInvalidated;
+            _observer?.Disconnect();
+            _context.Dispose();
+        }
+    }
+
+    private RenderedImage? Paint()
+    {
+        SyncActiveDocument();
+
+        if (!IsReadyForLayout())
+        {
+            return null;
+        }
+
+        _isPainting = true;
+
+        try
+        {
+            var now = Environment.TickCount64;
+
+            if (_lastPaint > 0)
+            {
+                _harness.AdvanceTime(TimeSpan.FromMilliseconds(now - _lastPaint));
+            }
+
+            _lastPaint = now;
+            return _harness.PaintToPng();
+        }
+        catch (Exception ex)
+        {
+            OnError(ex);
+            throw;
+        }
+        finally
+        {
+            _isPainting = false;
+        }
+    }
+
+    /// <summary>
+    /// AngleSharp parses documents, runs deferred scripts and applies style
+    /// sheets outside of the event loop. Laying out concurrently can crash the
+    /// renderer, so layout waits until the document is complete and all style
+    /// sheets (also those added later on) have arrived.
+    /// </summary>
+    private bool IsReadyForLayout()
+    {
+        var document = _document;
+        return document is not null &&
+            (document.ReadyState == DocumentReadyState.Complete || IsTextDocument(document)) &&
+            !document.QuerySelectorAll("link[rel~=stylesheet]")
+                .OfType<ILoadableElement>()
+                .Any(m => m.CurrentDownload is { Task.IsCompleted: false });
+    }
+
+    /// <summary>
+    /// AngleSharp shows text responses (e.g., text/plain or JSON) in a
+    /// generated document, which never leaves the loading state.
+    /// </summary>
+    private static bool IsTextDocument(IDocument document) =>
+        TextContentTypes.Contains(document.ContentType, StringComparer.OrdinalIgnoreCase);
+
+    private static void AddUserAgent(Request request, string userAgent)
+    {
+        if (!request.Headers.ContainsKey(HeaderNames.UserAgent))
+        {
+            request.Headers[HeaderNames.UserAgent] = userAgent;
+        }
+    }
+
+    private async Task LoadAsync(string url, bool isTraversal, CancellationToken cancellationToken)
+    {
+        _history.IsTraversing = isTraversal;
+
+        try
+        {
+            await TrackNavigationAsync(() => _context.OpenAsync(url, cancellationToken), url).ConfigureAwait(false);
+        }
+        finally
+        {
+            _history.IsTraversing = false;
+        }
+    }
+
+    /// <summary>
+    /// Moves through the history: within a document by firing popstate, else by loading the
+    /// entry's address.
+    /// </summary>
+    private async Task TraverseAsync(int delta, CancellationToken cancellationToken)
+    {
+        var entry = _history.Move(delta, out var isSameDocument);
+
+        if (entry is null)
+        {
+            return;
+        }
+
+        if (isSameDocument)
+        {
+            await RunExclusiveAsync(() =>
+            {
+                _document?.DefaultView?.Dispatch(new PopStateEvent(entry.State));
+                OnStateChanged();
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await LoadAsync(entry.Url, true, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task TrackNavigationAsync(Func<Task<IDocument>> navigate, string url)
+    {
+        Interlocked.Increment(ref _loadCount);
+        OnStateChanged();
+
+        try
+        {
+            try
+            {
+                await navigate().ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                OnError(ex);
+                await _context.OpenAsync(res => res.Content(CreateErrorPage(url, ex)).Address(url)).ConfigureAwait(false);
+            }
+
+            await RunExclusiveAsync(SyncActiveDocument).ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _loadCount);
+            OnStateChanged();
+        }
+    }
+
+    /// <summary>
+    /// Picks up a changed active document, which may come from our own
+    /// navigations or from the page (links, forms, scripts).
+    /// Requires exclusive access.
+    /// </summary>
+    private void SyncActiveDocument()
+    {
+        var active = _context.Active;
+
+        if (!ReferenceEquals(active, _document))
+        {
+            _observer?.Disconnect();
+            _observer = null;
+            _document = active;
+            _hovered = null;
+            _pressed = null;
+            _wasReadyForLayout = false;
+
+            if (active is not null)
+            {
+                _history.Push(active.Url, active);
+            }
+
+            _title = string.Empty;
+            KeepAnimating(SettleDuration);
+            OnLayoutChanged();
+            OnStateChanged();
+        }
+
+        if (active is not null && active.ReadyState != DocumentReadyState.Loading && (active.Title ?? string.Empty) != _title)
+        {
+            _title = active.Title ?? string.Empty;
+            OnStateChanged();
+        }
+
+        // a document still being parsed may not have a root to observe yet
+        if (_observer is null && active?.DocumentElement is IElement root)
+        {
+            _observer = new MutationObserver((_, _) => OnDocumentMutated());
+            _observer.Connect(root, childList: true, subtree: true, attributes: true, characterData: true);
+            OnLayoutChanged();
+        }
+    }
+
+    private async Task<T> RunExclusiveAsync<T>(Func<T> action, CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_isDisposed, this);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            // AngleSharp is not thread-safe; the event loop serializes the work with scripts. A task
+            // of the event loop that throws never completes, so the exception is carried out of it.
+            Exception? error = null;
+            var task = _loop is null ? Task.Run(action, cancellationToken) : _loop.EnqueueAsync(_ =>
+            {
+                try
+                {
+                    return action();
+                }
+                catch (Exception ex)
+                {
+                    error = ex;
+                    return default!;
+                }
+            });
+            var result = await task.ConfigureAwait(false);
+
+            if (error is not null)
+            {
+                ExceptionDispatchInfo.Throw(error);
+            }
+
+            return result;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private Task RunExclusiveAsync(Action action, CancellationToken cancellationToken = default) =>
+        RunExclusiveAsync(() =>
+        {
+            action();
+            return true;
+        }, cancellationToken);
+
+    private void OnHeartbeat(object? state)
+    {
+        if (_isDisposed)
+        {
+            return;
+        }
+
+        if (_gate.CurrentCount > 0)
+        {
+            RunExclusiveAsync(() =>
+            {
+                SyncActiveDocument();
+
+                if (!_wasReadyForLayout && IsReadyForLayout())
+                {
+                    _wasReadyForLayout = true;
+                    KeepAnimating(SettleDuration);
+                }
+            }).ContinueWith(task => OnError(task.Exception!.GetBaseException()), TaskContinuationOptions.OnlyOnFaulted);
+        }
+
+        if (Environment.TickCount64 < Volatile.Read(ref _animateUntil))
+        {
+            Invalidate();
+        }
+    }
+
+    private void OnPaintInvalidated(object? sender, EventArgs e)
+    {
+        if (!_isPainting)
+        {
+            Invalidate();
+        }
+    }
+
+    private void OnDocumentMutated()
+    {
+        if (!_isPainting)
+        {
+            OnLayoutChanged();
+        }
+    }
+
+    private void OnLayoutChanged()
+    {
+        Interlocked.Increment(ref _layoutVersion);
+        Invalidate();
+    }
+
+    /// <summary>
+    /// Keeps requesting frames for the given duration, such that resources
+    /// arriving later and CSS transitions are picked up.
+    /// </summary>
+    private void KeepAnimating(TimeSpan duration)
+    {
+        var until = Environment.TickCount64 + (long)duration.TotalMilliseconds;
+
+        if (until > Volatile.Read(ref _animateUntil))
+        {
+            Volatile.Write(ref _animateUntil, until);
+        }
+    }
+
+    private void Invalidate() => Invalidated?.Invoke(this, EventArgs.Empty);
+
+    private void OnStateChanged() => StateChanged?.Invoke(this, EventArgs.Empty);
+
+    private void OnError(Exception ex) => Error?.Invoke(this, ex);
+
+    private static string CreateErrorPage(string url, Exception ex) => $"""
+        <!doctype html>
+        <html>
+        <head><title>Problem loading page</title></head>
+        <body style="font-family: sans-serif; color: #333">
+        <h1>This page could not be loaded</h1>
+        <p>An error occurred while loading <b>{WebUtility.HtmlEncode(url)}</b>:</p>
+        <pre>{WebUtility.HtmlEncode(ex.Message)}</pre>
+        </body>
+        </html>
+        """;
+}

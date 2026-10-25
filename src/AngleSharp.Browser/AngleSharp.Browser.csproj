@@ -24,12 +24,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="AngleSharp" Version="1.7.0" />
-    <PackageReference Include="AngleSharp.Js" Version="1.0.0" />
-    <PackageReference Include="AngleSharp.Css" Version="1.0.1" />
-    <PackageReference Include="AngleSharp.Io" Version="1.1.0" />
-    <PackageReference Include="AngleSharp.Wasm" Version="1.0.0" />
-    <PackageReference Include="AngleSharp.Xml" Version="1.0.0" />
-    <PackageReference Include="AngleSharp.Renderer" Version="0.3.0-beta.21" />
+    <ProjectReference Include="..\AngleSharp.Browser.Core\AngleSharp.Browser.Core.csproj" />
   </ItemGroup>
 </Project>

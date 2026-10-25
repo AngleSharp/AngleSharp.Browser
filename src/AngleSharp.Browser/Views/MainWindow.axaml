@@ -1,81 +1,87 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:AngleSharp.Browser.ViewModels"
+        xmlns:controls="using:AngleSharp.Browser.Controls"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
         x:Class="AngleSharp.Browser.Views.MainWindow"
         x:DataType="vm:MainViewModel"
         Icon="/Assets/avalonia-logo.ico"
-    Title="AngleSharp.Browser"
-    Width="1200"
-    Height="800"
-    MinWidth="800"
-    MinHeight="500">
+        Title="{Binding WindowTitle}"
+        Width="1200"
+        Height="800"
+        MinWidth="480"
+        MinHeight="320">
 
-    <Design.DataContext>
-        <!-- This only sets the DataContext for the previewer in an IDE,
-             to set the actual DataContext for runtime, set the DataContext property in code (look at App.axaml.cs) -->
-        <vm:MainViewModel />
-    </Design.DataContext>
+    <Window.KeyBindings>
+        <KeyBinding Gesture="Alt+Left" Command="{Binding GoBackCommand}" />
+        <KeyBinding Gesture="Alt+Right" Command="{Binding GoForwardCommand}" />
+        <KeyBinding Gesture="F5" Command="{Binding ReloadCommand}" />
+        <KeyBinding Gesture="Ctrl+R" Command="{Binding ReloadCommand}" />
+    </Window.KeyBindings>
 
-    <Grid RowDefinitions="Auto,*">
+    <Grid RowDefinitions="Auto,*,Auto">
         <Border Grid.Row="0"
                 Background="#F4F6F8"
                 BorderBrush="#D8DEE6"
                 BorderThickness="0,0,0,1"
-                Padding="12,10">
-            <Grid ColumnDefinitions="Auto,*,Auto"
-                  ColumnSpacing="10"
+                Padding="8,6">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto"
+                  ColumnSpacing="6"
                   VerticalAlignment="Center">
-                <TextBlock Grid.Column="0"
-                           Text="URL"
-                           VerticalAlignment="Center"
-                           Foreground="#556172"
-                           FontWeight="SemiBold" />
+                <Button Grid.Column="0"
+                        Content="&#x2190;"
+                        ToolTip.Tip="Back (Alt+Left)"
+                        Command="{Binding GoBackCommand}" />
+                <Button Grid.Column="1"
+                        Content="&#x2192;"
+                        ToolTip.Tip="Forward (Alt+Right)"
+                        Command="{Binding GoForwardCommand}" />
+                <Button Grid.Column="2"
+                        Content="&#x21BB;"
+                        ToolTip.Tip="Reload (F5)"
+                        Command="{Binding ReloadCommand}" />
 
-                <TextBox Grid.Column="1"
-                         PlaceholderText="Enter a website and press Enter"
-                         Text="{Binding Address, UpdateSourceTrigger=PropertyChanged}"
+                <TextBox Grid.Column="3"
+                         x:Name="AddressBox"
+                         PlaceholderText="Enter an address and press Enter"
+                         Text="{Binding Address}"
                          VerticalAlignment="Center">
                     <TextBox.KeyBindings>
                         <KeyBinding Gesture="Enter" Command="{Binding NavigateCommand}" />
                     </TextBox.KeyBindings>
                 </TextBox>
 
-                <Button Grid.Column="2"
+                <Button Grid.Column="4"
                         Content="Go"
-                        MinWidth="72"
-                    Command="{Binding NavigateCommand}" />
+                        MinWidth="56"
+                        Command="{Binding NavigateCommand}" />
             </Grid>
         </Border>
 
-        <Grid Grid.Row="1" RowDefinitions="Auto,*">
-            <Border Grid.Row="0"
-                    Padding="12,8"
-                    Background="#FAFBFC"
-                    BorderBrush="#E2E8EF"
-                    BorderThickness="0,0,0,1">
-                <TextBlock Text="{Binding Status}"
-                           Foreground="#5A6574" />
-            </Border>
+        <controls:BrowserView Grid.Row="1"
+                              x:Name="View"
+                              Engine="{Binding Engine}" />
 
-            <Border Grid.Row="1"
-                    Margin="12"
-                    BorderBrush="#CDD6E0"
-                    BorderThickness="1"
-                    CornerRadius="6"
-                    Background="White"
-                    ClipToBounds="True">
-                <ScrollViewer HorizontalScrollBarVisibility="Auto"
-                              VerticalScrollBarVisibility="Auto">
-                    <Image Source="{Binding PageImage}"
-                           Stretch="None"
-                           HorizontalAlignment="Left"
-                           VerticalAlignment="Top" />
-                </ScrollViewer>
-            </Border>
-        </Grid>
+        <Border Grid.Row="2"
+                Padding="8,3"
+                Background="#FAFBFC"
+                BorderBrush="#E2E8EF"
+                BorderThickness="0,1,0,0">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Text="{Binding Status}"
+                           Foreground="#5A6574"
+                           FontSize="12"
+                           TextTrimming="CharacterEllipsis" />
+                <ProgressBar Grid.Column="1"
+                             IsIndeterminate="True"
+                             IsVisible="{Binding IsLoading}"
+                             Width="80"
+                             MinHeight="4"
+                             Height="4" />
+            </Grid>
+        </Border>
     </Grid>
 
 </Window>

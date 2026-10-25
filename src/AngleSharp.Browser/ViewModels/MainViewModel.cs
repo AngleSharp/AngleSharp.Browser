@@ -3,163 +3,79 @@ namespace AngleSharp.Browser.ViewModels;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using System;
-using System.IO;
-using System.Threading;
 using System.Threading.Tasks;
-using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 
 public partial class MainViewModel : ViewModelBase
 {
-    private readonly Engine _engine;
-    private CancellationTokenSource? _renderLoopCts;
-    private Task? _renderLoopTask;
+    private const string ApplicationName = "AngleSharp.Browser";
 
-    private static readonly TimeSpan RenderInterval = TimeSpan.FromMilliseconds(400);
-    private const int RenderWidth = 1280;
-    private const int RenderHeight = 2200;
+    private string? _lastError;
 
-    internal MainViewModel(Engine engine)
+    public MainViewModel(BrowserEngine engine, string startAddress)
     {
-        _engine = engine;
+        Engine = engine;
+        Address = startAddress;
+        engine.StateChanged += (_, _) => Dispatcher.UIThread.Post(UpdateState);
+        engine.HoverChanged += (_, _) => Dispatcher.UIThread.Post(UpdateStatus);
+        engine.Error += (_, ex) => Dispatcher.UIThread.Post(() =>
+        {
+            _lastError = ex.Message;
+            UpdateStatus();
+        });
     }
 
-    [ObservableProperty]
-    public partial string Address { get; set; } = "https://example.org";
+    public BrowserEngine Engine { get; }
 
     [ObservableProperty]
-    public partial Bitmap? PageImage { get; set; }
+    public partial string Address { get; set; }
+
+    [ObservableProperty]
+    public partial string WindowTitle { get; set; } = ApplicationName;
 
     [ObservableProperty]
     public partial string Status { get; set; } = "Ready";
 
     [ObservableProperty]
-    public partial bool IsBusy { get; set; }
+    public partial bool IsLoading { get; set; }
 
-    [RelayCommand(CanExecute = nameof(CanNavigate))]
-    private async Task NavigateAsync()
+    [RelayCommand]
+    private Task NavigateAsync()
     {
-        var urlText = NormalizeUrl(Address);
-
-        await StopRenderLoopAsync();
-
-        IsBusy = true;
-        Status = $"Loading {urlText}";
-        Address = urlText;
-        NavigateCommand.NotifyCanExecuteChanged();
-
-        _renderLoopCts = new CancellationTokenSource();
-        _renderLoopTask = RunRenderLoopAsync(urlText, _renderLoopCts.Token);
+        _lastError = null;
+        Address = BrowserEngine.NormalizeAddress(Address);
+        return Engine.NavigateAsync(Address);
     }
 
-    private bool CanNavigate() => !string.IsNullOrWhiteSpace(Address);
+    [RelayCommand(CanExecute = nameof(CanGoBack))]
+    private Task GoBackAsync() => Engine.GoBackAsync();
 
-    private async Task RunRenderLoopAsync(string url, CancellationToken cancellationToken)
+    [RelayCommand(CanExecute = nameof(CanGoForward))]
+    private Task GoForwardAsync() => Engine.GoForwardAsync();
+
+    [RelayCommand]
+    private Task ReloadAsync() => Engine.ReloadAsync();
+
+    private bool CanGoBack() => Engine.CanGoBack;
+
+    private bool CanGoForward() => Engine.CanGoForward;
+
+    private void UpdateState()
     {
-        var frames = 0;
+        if (Engine.Url is string url && url != "about:blank")
+        {
+            Address = url;
+        }
 
-        try
-        {
-            await _engine.StreamRendersAsync(
-                url,
-                RenderWidth,
-                RenderHeight,
-                RenderInterval,
-                async pngBytes =>
-                {
-                    frames++;
-                    await UpdateImageAsync(pngBytes).ConfigureAwait(false);
-                    await Dispatcher.UIThread.InvokeAsync(() =>
-                    {
-                        Status = $"Rendered {url} (frame {frames})";
-                    });
-                },
-                cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                if (Address == url)
-                {
-                    Status = $"Stopped rendering {url}";
-                }
-            });
-        }
-        catch (Exception ex)
-        {
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                Status = $"Failed: {ex.Message}";
-            });
-        }
-        finally
-        {
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                if (_renderLoopCts?.Token == cancellationToken)
-                {
-                    IsBusy = false;
-                    NavigateCommand.NotifyCanExecuteChanged();
-                }
-            });
-        }
+        WindowTitle = string.IsNullOrWhiteSpace(Engine.Title) ? ApplicationName : $"{Engine.Title} - {ApplicationName}";
+        IsLoading = Engine.IsLoading;
+        GoBackCommand.NotifyCanExecuteChanged();
+        GoForwardCommand.NotifyCanExecuteChanged();
+        UpdateStatus();
     }
 
-    private async Task UpdateImageAsync(byte[] pngBytes)
+    private void UpdateStatus()
     {
-        await using var memory = new MemoryStream(pngBytes);
-        var bitmap = new Bitmap(memory);
-
-        await Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            var previous = PageImage;
-            PageImage = bitmap;
-            previous?.Dispose();
-        });
-    }
-
-    private async Task StopRenderLoopAsync()
-    {
-        var cts = _renderLoopCts;
-        var task = _renderLoopTask;
-
-        if (cts is null || task is null)
-        {
-            return;
-        }
-
-        cts.Cancel();
-
-        try
-        {
-            await task;
-        }
-        catch (OperationCanceledException)
-        {
-            // Cancellation is expected when navigating to a new URL.
-        }
-        finally
-        {
-            cts.Dispose();
-            if (ReferenceEquals(_renderLoopCts, cts))
-            {
-                _renderLoopCts = null;
-                _renderLoopTask = null;
-            }
-        }
-    }
-
-    private static string NormalizeUrl(string? input)
-    {
-        var trimmed = input?.Trim() ?? string.Empty;
-        if (trimmed.Length == 0)
-        {
-            return "https://example.org";
-        }
-
-        return trimmed.Contains("://", StringComparison.Ordinal)
-            ? trimmed
-            : $"https://{trimmed}";
+        Status = Engine.HoveredLink ?? (IsLoading ? $"Loading {Address}" : _lastError ?? "Done");
     }
 }
