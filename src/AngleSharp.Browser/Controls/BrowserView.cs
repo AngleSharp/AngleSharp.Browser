@@ -3,7 +3,7 @@ namespace AngleSharp.Browser.Controls;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
@@ -12,19 +12,28 @@ using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Avalonia.Threading;
 
 /// <summary>
 /// Displays the frames painted by a <see cref="BrowserEngine"/> and
-/// forwards pointer and keyboard input to it.
+/// forwards pointer and keyboard input to it. While the page scrolls, the
+/// last frame (painted with some overscan) is shifted until the next one
+/// arrives; an overlay scrollbar shows and changes the scroll position.
 /// </summary>
 public sealed class BrowserView : Control
 {
     public static readonly StyledProperty<BrowserEngine?> EngineProperty =
         AvaloniaProperty.Register<BrowserView, BrowserEngine?>(nameof(Engine));
 
-    private static readonly TimeSpan MinFrameInterval = TimeSpan.FromMilliseconds(33);
+    private static readonly TimeSpan MinFrameInterval = TimeSpan.FromMilliseconds(16);
     private static readonly double WheelScrollDistance = 48;
+    private const double ScrollbarWidth = 12;
+    private const double MinThumbHeight = 24;
+
+    private static readonly IBrush ScrollbarTrackBrush = new SolidColorBrush(Color.FromArgb(0x18, 0, 0, 0));
+    private static readonly IBrush ScrollbarThumbBrush = new SolidColorBrush(Color.FromArgb(0x70, 0x50, 0x50, 0x50));
+    private static readonly IBrush ScrollbarActiveThumbBrush = new SolidColorBrush(Color.FromArgb(0xB0, 0x40, 0x40, 0x40));
 
     private static readonly Dictionary<Key, string> SpecialKeys = new()
     {
@@ -49,8 +58,17 @@ public sealed class BrowserView : Control
     private readonly Cursor _textCursor = new(StandardCursorType.Ibeam);
     private BrowserEngine? _engine;
     private Bitmap? _frame;
+    private FrameInfo _frameInfo;
     private int _isDirty;
     private int _isPaintLoopRunning;
+    private int _isScrollRenderPending;
+    private bool _isOverScrollbar;
+    private (double PointerY, double ScrollTop)? _thumbDrag;
+
+    /// <summary>
+    /// Where a displayed frame was painted, to shift it to the current scroll position.
+    /// </summary>
+    private readonly record struct FrameInfo(double ScrollTop, int OverscanTop, bool IsScrollShiftable);
 
     static BrowserView()
     {
@@ -73,7 +91,23 @@ public sealed class BrowserView : Control
 
         if (_frame is not null)
         {
-            context.DrawImage(_frame, new Rect(_frame.Size));
+            // until the next frame arrives, the page scrolls by moving this one
+            var shift = _frameInfo.IsScrollShiftable && _engine is not null ? _frameInfo.ScrollTop - _engine.ScrollPosition : 0;
+            context.DrawImage(_frame, new Rect(new Point(0, shift - _frameInfo.OverscanTop), _frame.Size));
+        }
+
+        if (TryGetScrollbar(out var track, out var thumb))
+        {
+            var isActive = _isOverScrollbar || _thumbDrag is not null;
+
+            if (isActive)
+            {
+                context.FillRectangle(ScrollbarTrackBrush, track);
+            }
+
+            var width = isActive ? ScrollbarWidth - 4 : ScrollbarWidth - 6;
+            var bar = new Rect(track.Right - 2 - width, thumb.Y + 2, width, Math.Max(0, thumb.Height - 4));
+            context.DrawRectangle(isActive ? ScrollbarActiveThumbBrush : ScrollbarThumbBrush, null, bar, width / 2, width / 2);
         }
     }
 
@@ -87,6 +121,7 @@ public sealed class BrowserView : Control
             {
                 _engine.Invalidated -= OnEngineInvalidated;
                 _engine.HoverChanged -= OnEngineHoverChanged;
+                _engine.ScrollChanged -= OnEngineScrollChanged;
             }
 
             _engine = change.GetNewValue<BrowserEngine?>();
@@ -95,6 +130,7 @@ public sealed class BrowserView : Control
             {
                 _engine.Invalidated += OnEngineInvalidated;
                 _engine.HoverChanged += OnEngineHoverChanged;
+                _engine.ScrollChanged += OnEngineScrollChanged;
                 ResizeEngine(Bounds.Size);
                 RequestPaint();
             }
@@ -116,13 +152,41 @@ public sealed class BrowserView : Control
     {
         base.OnPointerMoved(e);
         var position = e.GetPosition(this);
-        _engine?.MovePointer(position.X, position.Y);
+
+        if (_thumbDrag is { } drag && TryGetScrollbar(out var track, out var thumb) && _engine is BrowserEngine engine)
+        {
+            // the thumb moves along the track, which stands for the scrollable distance
+            var max = engine.ScrollHeight - engine.ViewportHeight;
+            var travel = Math.Max(1, track.Height - thumb.Height);
+            Observe(engine.ScrollToAsync(drag.ScrollTop + (position.Y - drag.PointerY) * max / travel, animate: false));
+        }
+        else
+        {
+            SetOverScrollbar(IsOnScrollbar(position));
+
+            if (!_isOverScrollbar)
+            {
+                _engine?.MovePointer(position.X, position.Y);
+            }
+        }
+    }
+
+    protected override void OnPointerExited(PointerEventArgs e)
+    {
+        base.OnPointerExited(e);
+        SetOverScrollbar(false);
     }
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
         var point = e.GetCurrentPoint(this);
+
+        if (point.Properties.PointerUpdateKind == PointerUpdateKind.LeftButtonPressed && IsOnScrollbar(point.Position))
+        {
+            PressScrollbar(e, point.Position);
+            return;
+        }
 
         switch (point.Properties.PointerUpdateKind)
         {
@@ -146,7 +210,15 @@ public sealed class BrowserView : Control
     {
         base.OnPointerReleased(e);
 
-        if (e.InitialPressMouseButton == MouseButton.Left)
+        if (_thumbDrag is not null)
+        {
+            _thumbDrag = null;
+            e.Pointer.Capture(null);
+            SetOverScrollbar(IsOnScrollbar(e.GetPosition(this)));
+            InvalidateVisual();
+            e.Handled = true;
+        }
+        else if (e.InitialPressMouseButton == MouseButton.Left)
         {
             var position = e.GetPosition(this);
             Observe(_engine?.PointerUpAsync(position.X, position.Y, GetModifiers(e.KeyModifiers)));
@@ -218,6 +290,80 @@ public sealed class BrowserView : Control
         }
     }
 
+    private void PressScrollbar(PointerPressedEventArgs e, Point position)
+    {
+        e.Handled = true;
+
+        if (_engine is not BrowserEngine engine || !TryGetScrollbar(out _, out var thumb))
+        {
+            return;
+        }
+
+        if (position.Y >= thumb.Top && position.Y <= thumb.Bottom)
+        {
+            _thumbDrag = (position.Y, engine.ScrollPosition);
+            e.Pointer.Capture(this);
+            InvalidateVisual();
+        }
+        else
+        {
+            // like a page up / down towards the pressed position
+            var page = engine.ViewportHeight * 0.875;
+            Observe(engine.ScrollToAsync(engine.ScrollPosition + (position.Y < thumb.Top ? -page : page)));
+        }
+    }
+
+    /// <summary>
+    /// Gets the scrollbar's track and thumb, if the page is taller than the viewport.
+    /// </summary>
+    private bool TryGetScrollbar(out Rect track, out Rect thumb)
+    {
+        track = thumb = default;
+        var engine = _engine;
+
+        if (engine is null || _frame is null)
+        {
+            return false;
+        }
+
+        var viewport = (double)engine.ViewportHeight;
+        var content = engine.ScrollHeight;
+
+        if (content <= viewport + 1 || Bounds.Width < 2 * ScrollbarWidth)
+        {
+            return false;
+        }
+
+        track = new Rect(Bounds.Width - ScrollbarWidth, 0, ScrollbarWidth, Bounds.Height);
+        var height = Math.Min(track.Height, Math.Max(MinThumbHeight, track.Height * viewport / content));
+        var progress = Math.Clamp(engine.ScrollPosition / (content - viewport), 0, 1);
+        thumb = new Rect(track.X, (track.Height - height) * progress, ScrollbarWidth, height);
+        return true;
+    }
+
+    private bool IsOnScrollbar(Point position) =>
+        TryGetScrollbar(out var track, out _) && track.Contains(position);
+
+    private void SetOverScrollbar(bool isOverScrollbar)
+    {
+        if (_isOverScrollbar != isOverScrollbar)
+        {
+            _isOverScrollbar = isOverScrollbar;
+            UpdateCursor();
+            InvalidateVisual();
+        }
+    }
+
+    private void UpdateCursor()
+    {
+        Cursor = _isOverScrollbar ? _arrowCursor : _engine?.Cursor switch
+        {
+            BrowserCursor.Pointer => _handCursor,
+            BrowserCursor.Text => _textCursor,
+            _ => _arrowCursor,
+        };
+    }
+
     private void ResizeEngine(Size size)
     {
         if (_engine is not null && size.Width >= 1 && size.Height >= 1)
@@ -228,17 +374,19 @@ public sealed class BrowserView : Control
 
     private void OnEngineInvalidated(object? sender, EventArgs e) => RequestPaint();
 
-    private void OnEngineHoverChanged(object? sender, EventArgs e)
+    private void OnEngineHoverChanged(object? sender, EventArgs e) => Dispatcher.UIThread.Post(UpdateCursor);
+
+    private void OnEngineScrollChanged(object? sender, EventArgs e)
     {
-        Dispatcher.UIThread.Post(() =>
+        // scrolling ticks faster than the UI may render, so they are coalesced
+        if (Interlocked.Exchange(ref _isScrollRenderPending, 1) == 0)
         {
-            Cursor = _engine?.Cursor switch
+            Dispatcher.UIThread.Post(() =>
             {
-                BrowserCursor.Pointer => _handCursor,
-                BrowserCursor.Text => _textCursor,
-                _ => _arrowCursor,
-            };
-        });
+                Volatile.Write(ref _isScrollRenderPending, 0);
+                InvalidateVisual();
+            }, DispatcherPriority.Render);
+        }
     }
 
     /// <summary>
@@ -255,35 +403,38 @@ public sealed class BrowserView : Control
         }
     }
 
+    /// <summary>
+    /// Paints frames while there are changes. The engine lays out the next frame while the
+    /// previous one is rasterized and presented on another thread.
+    /// </summary>
     private async Task PaintLoopAsync()
     {
+        Task? presenting = null;
+
         try
         {
             while (Interlocked.Exchange(ref _isDirty, 0) == 1 && _engine is BrowserEngine engine)
             {
                 var watch = Stopwatch.StartNew();
-                var image = await engine.PaintAsync().ConfigureAwait(false);
+                var frame = await engine.PrepareFrameAsync().ConfigureAwait(false);
 
-                if (image is not null)
+                if (presenting is not null)
                 {
-                    using var stream = new MemoryStream(image.Data);
-                    var bitmap = new Bitmap(stream);
-
-                    await Dispatcher.UIThread.InvokeAsync(() =>
-                    {
-                        var previous = _frame;
-                        _frame = bitmap;
-                        previous?.Dispose();
-                        InvalidateVisual();
-                    });
+                    await presenting.ConfigureAwait(false);
                 }
 
+                presenting = frame is null ? null : Task.Run(() => PresentAsync(frame));
                 var remaining = MinFrameInterval - watch.Elapsed;
 
                 if (remaining > TimeSpan.Zero)
                 {
                     await Task.Delay(remaining).ConfigureAwait(false);
                 }
+            }
+
+            if (presenting is not null)
+            {
+                await presenting.ConfigureAwait(false);
             }
         }
         catch (ObjectDisposedException)
@@ -303,6 +454,29 @@ public sealed class BrowserView : Control
                 RequestPaint();
             }
         }
+    }
+
+    private async Task PresentAsync(BrowserFrame frame)
+    {
+        var pixels = frame.Rasterize();
+        var bitmap = new WriteableBitmap(new PixelSize(pixels.Width, pixels.Height), new Vector(96, 96), PixelFormat.Rgba8888, AlphaFormat.Premul);
+
+        using (var buffer = bitmap.Lock())
+        {
+            for (var row = 0; row < pixels.Height; row++)
+            {
+                Marshal.Copy(pixels.Data, row * pixels.RowBytes, buffer.Address + row * buffer.RowBytes, pixels.RowBytes);
+            }
+        }
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            var previous = _frame;
+            _frame = bitmap;
+            _frameInfo = new FrameInfo(frame.ScrollTop, frame.OverscanTop, frame.IsScrollShiftable);
+            previous?.Dispose();
+            InvalidateVisual();
+        });
     }
 
     private static InputModifiers GetModifiers(KeyModifiers modifiers)

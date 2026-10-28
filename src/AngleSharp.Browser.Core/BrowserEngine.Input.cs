@@ -8,6 +8,7 @@ using AngleSharp.Dom;
 using AngleSharp.Dom.Events;
 using AngleSharp.Html.Dom;
 using AngleSharp.Html.Dom.Events;
+using AngleSharp.Io;
 using AngleSharp.Js;
 
 /// <summary>
@@ -64,6 +65,7 @@ partial class BrowserEngine
     private readonly object _pointerLock = new();
     private (double X, double Y)? _pendingPointer;
     private (double X, double Y) _lastPointer;
+    private bool _hasPointer;
     private bool _isPointerWorkerRunning;
     private int _hitTestVersion = -1;
     private IElement? _hovered;
@@ -87,13 +89,22 @@ partial class BrowserEngine
     public BrowserCursor Cursor => _cursor;
 
     /// <summary>
-    /// Moves the pointer to the given viewport position. Moves are coalesced,
+    /// Moves the pointer to the given viewport position. The cursor and the hovered
+    /// link are looked up in the last frame right away; the DOM events are coalesced,
     /// i.e., only the latest position is processed once the engine is free.
     /// </summary>
     /// <param name="x">The horizontal position in CSS pixels.</param>
     /// <param name="y">The vertical position in CSS pixels.</param>
     public void MovePointer(double x, double y)
     {
+        _lastPointer = (x, y);
+        _hasPointer = true;
+
+        if (FindPointerTarget(x, y) is { } target)
+        {
+            SetPointerState(target.Href, target.Cursor);
+        }
+
         lock (_pointerLock)
         {
             _pendingPointer = (x, y);
@@ -197,22 +208,33 @@ partial class BrowserEngine
     /// <param name="deltaX">The horizontal distance in CSS pixels.</param>
     /// <param name="deltaY">The vertical distance in CSS pixels.</param>
     /// <param name="cancellationToken">The token to cancel waiting for the engine.</param>
+    /// <remarks>
+    /// The page scrolls smoothly; the returned task completes once it arrived. Unless the
+    /// pointer is above a scroll container, it starts right away, without waiting for the engine.
+    /// </remarks>
     public async Task ScrollAsync(double deltaX, double deltaY, CancellationToken cancellationToken = default)
     {
-        await RunExclusiveAsync(() =>
+        if (_hasPointer && FindPointerTarget(_lastPointer.X, _lastPointer.Y) is { IsInScrollContainer: false })
+        {
+            await RequestScroll(top => top + deltaY, animate: true).ConfigureAwait(false);
+            return;
+        }
+
+        var scrolling = await RunExclusiveAsync(() =>
         {
             var container = FindScrollContainer(_hovered?.Owner == _document ? _hovered : null, deltaY);
 
-            if (container is not null)
+            if (container is null)
             {
-                container.ScrollBy(deltaX, deltaY);
-                Fire(container, new Event("scroll", false, false));
+                return ScrollPage(deltaY);
             }
-            else
-            {
-                ScrollPage(deltaY);
-            }
+
+            container.ScrollBy(deltaX, deltaY);
+            Fire(container, new Event("scroll", false, false));
+            return Task.CompletedTask;
         }, cancellationToken).ConfigureAwait(false);
+
+        await scrolling.ConfigureAwait(false);
 
         // the content below the pointer changed
         MovePointer(_lastPointer.X, _lastPointer.Y);
@@ -296,10 +318,23 @@ partial class BrowserEngine
         }
     }
 
-    private void UpdateHover(double x, double y)
+    /// <summary>
+    /// Updates the hover state for the pointer at the given position. The last frame
+    /// answers which element is there, even if the layout changed since: the next frame
+    /// updates the hover state again. Requires exclusive access.
+    /// </summary>
+    private void UpdateHover(double x, double y, bool isMove = true)
     {
-        var element = HitTest(x, y);
+        if (!isMove && !_hasPointer)
+        {
+            return;
+        }
+
+        var target = FindPointerTarget(x, y);
+        var element = target is { } found ? found.Element : HitTest(x, y);
         var previous = _hovered;
+        _lastPointer = (x, y);
+        _hasPointer = true;
 
         if (element != previous)
         {
@@ -317,29 +352,53 @@ partial class BrowserEngine
             KeepAnimating(InteractionDuration);
         }
 
-        if (element is not null)
+        if (element is not null && isMove)
         {
             Fire(element, CreateMouseEvent("mousemove", x, y, InputModifiers.None));
         }
 
-        var link = FindLink(element);
-        var href = link is IUrlUtilities utilities ? utilities.Href : null;
-        var cursor = GetCursor(element, link);
+        _harness.SetHoveredElement(element);
 
-        if (href != _hoveredLink || cursor != _cursor)
+        if (target is { } info)
         {
-            _hoveredLink = href;
-            _cursor = cursor;
-            HoverChanged?.Invoke(this, EventArgs.Empty);
+            SetPointerState(info.Href, info.Cursor);
+        }
+        else
+        {
+            var link = FindLink(element);
+            SetPointerState(link is IUrlUtilities utilities ? utilities.Href : null, GetCursor(element, link));
         }
     }
 
+    private void SetPointerState(string? href, BrowserCursor cursor)
+    {
+        lock (_pointerLock)
+        {
+            if (href == _hoveredLink && cursor == _cursor)
+            {
+                return;
+            }
+
+            _hoveredLink = href;
+            _cursor = cursor;
+        }
+
+        HoverChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     /// <summary>
-    /// Finds the top-most element at the given viewport position.
+    /// Finds the top-most element at the given viewport position: in the last frame, if
+    /// it shows the current layout, else by laying out the page.
     /// </summary>
     private IElement? HitTest(double x, double y)
     {
         _lastPointer = (x, y);
+        _hasPointer = true;
+
+        if (IsPointerFrameCurrent() && FindPointerTarget(x, y) is { } target)
+        {
+            return target.Element;
+        }
 
         if (_document?.DocumentElement is null || !IsReadyForLayout())
         {
@@ -410,9 +469,9 @@ partial class BrowserEngine
                 button.Form?.Reset();
                 return null;
             case IHtmlAnchorElement anchor:
-                return FollowHyperlink(anchor, anchor.Href);
+                return FollowHyperlink(anchor, anchor.Href, modifiers);
             case IHtmlAreaElement area:
-                return FollowHyperlink(area, area.Href);
+                return FollowHyperlink(area, area.Href, modifiers);
             case IHtmlLabelElement label when label.Control is IElement control:
                 return Click(control, x, y, modifiers);
             case IHtmlElement { LocalName: "summary", ParentElement: IHtmlDetailsElement details }:
@@ -433,7 +492,7 @@ partial class BrowserEngine
         return TrackNavigationAsync(() => form.SubmitAsync(submitter), form.Action);
     }
 
-    private Task? FollowHyperlink<TElement>(TElement element, string href)
+    private Task? FollowHyperlink<TElement>(TElement element, string href, InputModifiers modifiers)
         where TElement : class, IUrlUtilities, IElement
     {
         if (href.StartsWith("javascript:", StringComparison.OrdinalIgnoreCase))
@@ -449,6 +508,25 @@ partial class BrowserEngine
         {
             ScrollToFragment(target.Fragment);
             return null;
+        }
+
+        var targetName = element.GetAttribute("target");
+        var isNewWindow = modifiers.HasFlag(InputModifiers.Control) || modifiers.HasFlag(InputModifiers.Meta) ||
+            (!string.IsNullOrEmpty(targetName) && targetName is not ("_self" or "_parent" or "_top") && _context.FindChildFor(targetName) is null);
+
+        if (isNewWindow)
+        {
+            var request = new WindowRequestedEventArgs(target.Href);
+            WindowRequested?.Invoke(this, request);
+
+            if (request.Handled)
+            {
+                return null;
+            }
+
+            // a new browsing context of this engine would never be shown, so the page navigates
+            var navigation = DocumentRequest.Get(target, referer: _document.DocumentUri);
+            return TrackNavigationAsync(() => _context.OpenAsync(navigation), href);
         }
 
         return TrackNavigationAsync(() => element.NavigateAsync(), href);
@@ -529,28 +607,23 @@ partial class BrowserEngine
         {
             var page = ViewportHeight * 0.875;
 
+            // the returned scrolling completes once the page arrived
             switch (key)
             {
                 case "ArrowDown":
-                    ScrollPage(LineScrollDistance);
-                    break;
+                    return ScrollPage(LineScrollDistance);
                 case "ArrowUp":
-                    ScrollPage(-LineScrollDistance);
-                    break;
+                    return ScrollPage(-LineScrollDistance);
                 case "PageDown":
                 case " " when !modifiers.HasFlag(InputModifiers.Shift):
-                    ScrollPage(page);
-                    break;
+                    return ScrollPage(page);
                 case "PageUp":
                 case " ":
-                    ScrollPage(-page);
-                    break;
+                    return ScrollPage(-page);
                 case "Home":
-                    ScrollPage(double.NegativeInfinity);
-                    break;
+                    return ScrollPage(double.NegativeInfinity);
                 case "End":
-                    ScrollPage(double.PositiveInfinity);
-                    break;
+                    return ScrollPage(double.PositiveInfinity);
             }
         }
 
@@ -619,15 +692,20 @@ partial class BrowserEngine
         }
     }
 
-    private void ScrollPage(double delta)
+    /// <summary>
+    /// Scrolls the page smoothly by the given distance. Requires exclusive access.
+    /// </summary>
+    /// <returns>The task completing once the page arrived.</returns>
+    private Task ScrollPage(double delta)
     {
         if (_document?.DocumentElement is IElement root && IsReadyForLayout())
         {
-            var max = GetMaxScrollTop(root);
-            var top = Math.Clamp(ScrollTop + Math.Clamp(delta, -max, max), 0, max);
-            _harness.SetScrollTop(root, top, max);
-            Fire(_document, new Event("scroll", false, false));
+            GetMaxScrollTop(root);
+            AdoptScrollPosition(ScrollTop);
+            return RequestScroll(top => top + delta, animate: true);
         }
+
+        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -640,8 +718,7 @@ partial class BrowserEngine
 
         if (version != _scrollExtentVersion)
         {
-            _scrollExtentVersion = version;
-            _maxScrollTop = Math.Max(0, root.GetScrollHeight() - root.GetClientHeight());
+            UpdateScrollExtent(root.GetScrollHeight() - root.GetClientHeight() + ViewportHeight, version);
         }
 
         return _maxScrollTop;

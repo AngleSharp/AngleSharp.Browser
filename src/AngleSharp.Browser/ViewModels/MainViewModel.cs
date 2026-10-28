@@ -11,6 +11,7 @@ public partial class MainViewModel : ViewModelBase
     private const string ApplicationName = "AngleSharp.Browser";
 
     private string? _lastError;
+    private string? _lastUrl;
 
     public MainViewModel(BrowserEngine engine, string startAddress)
     {
@@ -62,13 +63,16 @@ public partial class MainViewModel : ViewModelBase
 
     private void UpdateState()
     {
-        if (Engine.Url is string url && url != "about:blank")
+        // only a new address replaces what may be typed into the box
+        if (Engine.Url is string url && url != "about:blank" && url != _lastUrl)
         {
+            _lastUrl = url;
             Address = url;
         }
 
         WindowTitle = string.IsNullOrWhiteSpace(Engine.Title) ? ApplicationName : $"{Engine.Title} - {ApplicationName}";
-        IsLoading = Engine.IsLoading;
+        // a page has loaded once it is visible, which needs its first frame
+        IsLoading = Engine.IsLoading || !Engine.HasPaintedDocument;
         GoBackCommand.NotifyCanExecuteChanged();
         GoForwardCommand.NotifyCanExecuteChanged();
         UpdateStatus();

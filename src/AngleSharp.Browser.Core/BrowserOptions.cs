@@ -72,9 +72,21 @@ public sealed class BrowserOptions
     /// </summary>
     public Func<IConfiguration, IConfiguration>? Configure { get; set; }
 
-    internal IoOptions CreateIoOptions()
+    /// <summary>
+    /// Creates the IO options of an engine. Another window of a profile shares its data, but
+    /// gets an HTTP handler of its own: a handler cannot be configured anymore once it has sent
+    /// a request, which the IO setup of every engine does.
+    /// </summary>
+    internal IoOptions CreateIoOptions(IoOptions? profile = null)
     {
-        var options = ProfileDirectory is null
+        var options = profile is not null ? new IoOptions
+        {
+            CookieHandler = profile.CookieHandler,
+            StorageFactory = profile.StorageFactory,
+            IndexedDbFactory = profile.IndexedDbFactory,
+            CacheFactory = profile.CacheFactory,
+            HttpCache = profile.HttpCache,
+        } : ProfileDirectory is null
             ? IoOptions.CreateTemporary()
             : IoOptions.CreatePersistent(ProfileDirectory);
 

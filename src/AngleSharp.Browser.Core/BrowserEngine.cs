@@ -8,11 +8,13 @@ using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Threading.Tasks;
 using AngleSharp.Browser.Dom;
+using AngleSharp.Browser.Dom.Events;
 using AngleSharp.Css;
 using AngleSharp.Css.Dom;
 using AngleSharp.Dom;
 using AngleSharp.Dom.Events;
 using AngleSharp.Io;
+using AngleSharp.Io.Cookie;
 using AngleSharp.Js;
 using AngleSharp.Renderer;
 using AngleSharp.Renderer.Rendering;
@@ -33,6 +35,9 @@ public sealed partial class BrowserEngine : IDisposable
     private static readonly TimeSpan InteractionDuration = TimeSpan.FromMilliseconds(600);
     private static readonly string[] TextContentTypes = [MimeTypeNames.Plain, MimeTypeNames.ApplicationJson, MimeTypeNames.DefaultJavaScript, MimeTypeNames.Css];
 
+    private readonly BrowserOptions _options;
+    private readonly IoOptions _ioOptions;
+    private readonly ICookieProvider _cookies;
     private readonly IBrowsingContext _context;
     private readonly DefaultRenderDevice _device;
     private readonly IDomHarness _harness;
@@ -43,6 +48,8 @@ public sealed partial class BrowserEngine : IDisposable
     private MutationObserver? _observer;
     private IDocument? _document;
     private string _title = string.Empty;
+    private PendingNavigation? _pendingNavigation;
+    private int _navigationId;
     private long _animateUntil;
     private long _lastPaint;
     private int _loadCount;
@@ -58,8 +65,17 @@ public sealed partial class BrowserEngine : IDisposable
     /// </summary>
     /// <param name="options">The options to use, if any.</param>
     public BrowserEngine(BrowserOptions? options = null)
+        : this(options ?? new BrowserOptions(), null)
     {
-        options ??= new BrowserOptions();
+    }
+
+    /// <summary>
+    /// Creates an engine, which shares the profile (cookies, storage, caches) of the given
+    /// opener, if any.
+    /// </summary>
+    private BrowserEngine(BrowserOptions options, BrowserEngine? opener)
+    {
+        _options = options;
 
         _device = new DefaultRenderDevice
         {
@@ -73,13 +89,17 @@ public sealed partial class BrowserEngine : IDisposable
             IsScripting = options.IsScriptingEnabled,
         };
 
-        var ioOptions = options.CreateIoOptions();
+        var ioOptions = options.CreateIoOptions(opener?._ioOptions);
+        // every engine of a profile has to see the same cookies, not its own copy of the file
+        _ioOptions = ioOptions;
+        _cookies = opener?._cookies ?? new SynchronizedCookieProvider(new AdvancedCookieProvider(ioOptions.CookieHandler));
         var config = Configuration.Default
             .WithEventLoop()
             .WithRenderDevice(_device)
             .WithXml()
             .WithCss()
             .WithIo(ioOptions)
+            .WithCookies(_cookies)
             .WithWasm()
             .WithRendering()
             .WithDefaultLoader(new LoaderOptions
@@ -126,6 +146,14 @@ public sealed partial class BrowserEngine : IDisposable
             // the default style sheet lacks the rule from the HTML standard (15.3.1)
             _context.GetService<ICssDefaultStyleSheetProvider>()?.AppendDefault("noscript { display: none !important }");
         }
+        // script errors (e.g., an API missing in the engine) would go unnoticed otherwise
+        _context.AddEventListener("error", (_, ev) =>
+        {
+            if (ev is TrackEvent { Error: Exception error })
+            {
+                OnError(error);
+            }
+        });
         _harness = _context.GetDomHarness();
         _loop = _context.GetService<IEventLoop>();
         _harness.PaintInvalidated += OnPaintInvalidated;
@@ -136,6 +164,14 @@ public sealed partial class BrowserEngine : IDisposable
     /// Raised when the visual output changed and a new frame should be painted.
     /// </summary>
     public event EventHandler? Invalidated;
+
+    /// <summary>
+    /// Raised when the page asks for a new window (e.g., a link with target="_blank" or a
+    /// link clicked with Control). The host may create one with <see cref="CreateWindow"/>
+    /// and mark the request as handled; otherwise the current page navigates. Raised on the
+    /// engine's thread.
+    /// </summary>
+    public event EventHandler<WindowRequestedEventArgs>? WindowRequested;
 
     /// <summary>
     /// Raised when the address, title, loading or history state changed.
@@ -158,9 +194,10 @@ public sealed partial class BrowserEngine : IDisposable
     public IDocument? Document => _document;
 
     /// <summary>
-    /// Gets the address of the currently displayed document.
+    /// Gets the address of the currently displayed document, or the address being navigated
+    /// to while a navigation is in progress.
     /// </summary>
-    public string? Url => _history.GetUrl(_document) ?? _document?.Url;
+    public string? Url => Volatile.Read(ref _pendingNavigation)?.Url ?? _history.GetUrl(_document) ?? _document?.Url;
 
     /// <summary>
     /// Gets the title of the currently displayed document.
@@ -318,6 +355,17 @@ public sealed partial class BrowserEngine : IDisposable
             return result;
         }, cancellationToken);
 
+    /// <summary>
+    /// Creates the engine of another window. It uses the same options and shares the profile
+    /// (cookies, storage, caches), but has its own browsing context and history.
+    /// </summary>
+    /// <returns>The new engine, which the caller disposes.</returns>
+    public BrowserEngine CreateWindow()
+    {
+        ObjectDisposedException.ThrowIf(_isDisposed, this);
+        return new BrowserEngine(_options, this);
+    }
+
     /// <inheritdoc />
     public void Dispose()
     {
@@ -325,6 +373,13 @@ public sealed partial class BrowserEngine : IDisposable
         {
             _isDisposed = true;
             _heartbeat.Dispose();
+
+            lock (_scrollLock)
+            {
+                _scrollTimer?.Dispose();
+                _scrollTimer = null;
+            }
+
             _harness.PaintInvalidated -= OnPaintInvalidated;
             _observer?.Disconnect();
             _context.Dispose();
@@ -344,14 +399,7 @@ public sealed partial class BrowserEngine : IDisposable
 
         try
         {
-            var now = Environment.TickCount64;
-
-            if (_lastPaint > 0)
-            {
-                _harness.AdvanceTime(TimeSpan.FromMilliseconds(now - _lastPaint));
-            }
-
-            _lastPaint = now;
+            AdvanceClock();
             return _harness.PaintToPng();
         }
         catch (Exception ex)
@@ -439,6 +487,9 @@ public sealed partial class BrowserEngine : IDisposable
 
     private async Task TrackNavigationAsync(Func<Task<IDocument>> navigate, string url)
     {
+        // the address shows where we are going right away, like in any browser
+        var navigation = new PendingNavigation(Interlocked.Increment(ref _navigationId), url);
+        Volatile.Write(ref _pendingNavigation, navigation);
         Interlocked.Increment(ref _loadCount);
         OnStateChanged();
 
@@ -458,6 +509,9 @@ public sealed partial class BrowserEngine : IDisposable
         }
         finally
         {
+            // unless a later navigation took over the address already
+            Interlocked.CompareExchange(ref _pendingNavigation, null, navigation);
+
             Interlocked.Decrement(ref _loadCount);
             OnStateChanged();
         }
@@ -479,7 +533,9 @@ public sealed partial class BrowserEngine : IDisposable
             _document = active;
             _hovered = null;
             _pressed = null;
+            _pointerFrame = null;
             _wasReadyForLayout = false;
+            ResetScrollPosition();
 
             if (active is not null)
             {
@@ -614,7 +670,17 @@ public sealed partial class BrowserEngine : IDisposable
         }
     }
 
-    private void Invalidate() => Invalidated?.Invoke(this, EventArgs.Empty);
+    private sealed record PendingNavigation(int Id, string Url);
+
+    private void Invalidate()
+    {
+        if (!_isSyncingScroll)
+        {
+            _needsLayout = true;
+        }
+
+        Invalidated?.Invoke(this, EventArgs.Empty);
+    }
 
     private void OnStateChanged() => StateChanged?.Invoke(this, EventArgs.Empty);
 
