@@ -178,8 +178,9 @@ public sealed class BrowserView : Control
         }
         else if (SpecialKeys.TryGetValue(e.Key, out var key) || !e.KeyModifiers.HasFlag(KeyModifiers.Control) && !e.KeyModifiers.HasFlag(KeyModifiers.Alt))
         {
-            // shortcuts with control or alt are left to the window
-            e.Handled = true;
+            // shortcuts with control or alt are left to the window; keys producing
+            // characters stay unhandled, as Avalonia only raises TextInput for those
+            e.Handled = key is not null && key != " ";
             Observe(engine.KeyDownAsync(key ?? e.KeySymbol ?? e.Key.ToString(), GetModifiers(e.KeyModifiers)));
         }
     }
