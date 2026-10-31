@@ -15,13 +15,14 @@ partial class BrowserEngine
     private (RenderedFrame Frame, IDocument Document, int Width, int Height, int LayoutVersion)? _lastFrame;
     // anything but scrolling the page invalidates the last frame's layout
     private volatile bool _needsLayout = true;
+    private volatile bool _needsFullLayout = true;
     private bool _isSyncingScroll;
 
     /// <summary>
     /// What the last frame painted where, together with what the pointer would show for each
     /// element. Immutable, so the host's thread reads it without waiting for the engine.
     /// </summary>
-    private sealed record PointerFrame(IDocument Document, HitTestMap Map, Dictionary<IElement, PointerInfo> Infos, double ScrollTop, bool IsScrollShiftable, int LayoutVersion);
+    private sealed record PointerFrame(IDocument Document, RenderedFrame Frame, HitTestMap Map, Dictionary<IElement, PointerInfo> Infos, double ScrollTop, bool IsScrollShiftable, int LayoutVersion);
 
     private readonly record struct PointerInfo(string? Href, bool IsTextEntry);
 
@@ -46,8 +47,54 @@ partial class BrowserEngine
     /// </summary>
     /// <param name="cancellationToken">The token to cancel waiting for the engine.</param>
     /// <returns>The frame or null if no document is ready to be painted.</returns>
-    public Task<BrowserFrame?> PrepareFrameAsync(CancellationToken cancellationToken = default) =>
-        RunExclusiveAsync(PrepareFrame, cancellationToken);
+    public async Task<BrowserFrame?> PrepareFrameAsync(CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_isDisposed, this);
+
+        // while the page is busy, the scrolling goes on with the last frame
+        while (!await _gate.WaitAsync(ScrollTickInterval, cancellationToken).ConfigureAwait(false))
+        {
+            if (RepositionShownFrame() is { } frame)
+            {
+                return frame;
+            }
+        }
+
+        return await RunEnteredAsync(PrepareFrame, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Like a compositor, keeps scrolling while the page is busy (e.g., a script laying out the
+    /// page over and over): the last frame is moved to the scroll position, which does not touch
+    /// the DOM. Returns null if the frame shows the position already or cannot be moved.
+    /// </summary>
+    private BrowserFrame? RepositionShownFrame()
+    {
+        var shown = _pointerFrame;
+        var document = _document;
+        var position = ScrollPosition;
+
+        if (shown is not { Frame.CanReposition: true } || !ReferenceEquals(shown.Document, document) || shown.ScrollTop == position)
+        {
+            return null;
+        }
+
+        var frame = shown.Frame.Reposition(position);
+
+        // a frame laid out meanwhile is newer than the moved one
+        if (Interlocked.CompareExchange(ref _pointerFrame, shown with { Frame = frame, Map = frame.HitTestMap, ScrollTop = frame.ScrollTop }, shown) != shown)
+        {
+            return null;
+        }
+
+        // the page changed since, which the next frame shows once the page is free again
+        if (_needsLayout)
+        {
+            Invalidated?.Invoke(this, EventArgs.Empty);
+        }
+
+        return new BrowserFrame(frame, () => OnFramePainted(document));
+    }
 
     private BrowserFrame? PrepareFrame()
     {
@@ -71,9 +118,15 @@ partial class BrowserEngine
             // fixed boxes stay in place
             frame = last.Frame.Reposition(ScrollTop);
         }
+        else if (!_needsFullLayout && TryReuseLastFrame(document) is { } reused)
+        {
+            _needsLayout = false;
+            frame = reused;
+        }
         else
         {
             _needsLayout = false;
+            _needsFullLayout = false;
             _isPainting = true;
 
             try
@@ -94,7 +147,7 @@ partial class BrowserEngine
 
         _lastFrame = (frame, document, ViewportWidth, ViewportHeight, version);
 
-        _pointerFrame = new PointerFrame(document, frame.HitTestMap, CreatePointerInfos(frame.HitTestMap), frame.ScrollTop, frame.IsScrollShiftable, version);
+        _pointerFrame = new PointerFrame(document, frame, frame.HitTestMap, CreatePointerInfos(frame.HitTestMap), frame.ScrollTop, frame.IsScrollShiftable, version);
         UpdateScrollExtent(frame.ContentHeight, version);
         AdoptScrollPosition(frame.ScrollTop);
         // the content below the pointer may have moved; like other browsers, the hover state
@@ -111,6 +164,31 @@ partial class BrowserEngine
         }
 
         return new BrowserFrame(frame, () => OnFramePainted(document));
+    }
+
+    /// <summary>
+    /// The last frame brought up to date without a layout of the whole document, if the changes
+    /// allow it (see <see cref="IDomHarness.UpdateFrame"/>): it is the same frame when they did
+    /// not change what it shows (e.g. a script showing, measuring and hiding a dropdown again on
+    /// every scroll), else the boxes out of the flow that changed are replaced in it (e.g. a menu
+    /// changing its items). Requires exclusive access.
+    /// </summary>
+    private RenderedFrame? TryReuseLastFrame(IDocument document)
+    {
+        if (_lastFrame is not { } last || !ReferenceEquals(last.Document, document) || last.Width != ViewportWidth || last.Height != ViewportHeight ||
+            _harness.UpdateFrame() is not { } frame)
+        {
+            return null;
+        }
+
+        var scrollTop = ScrollTop;
+
+        if (frame.ScrollTop == scrollTop)
+        {
+            return frame;
+        }
+
+        return frame.CanReposition && (frame.OverscanTop > 0 || !frame.IsScrollShiftable) ? frame.Reposition(scrollTop) : null;
     }
 
     private void AdvanceClock()

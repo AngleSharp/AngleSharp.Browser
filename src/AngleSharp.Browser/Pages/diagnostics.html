@@ -1,0 +1,247 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Diagnostics</title>
+<style>
+{{styles}}
+
+.top {
+  padding: 12px 12px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.title-row h1 {
+  font-size: 14px;
+}
+
+.tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+/* the panel is the viewport, so it decides how many tabs fit in a row */
+@media (min-width: 340px) {
+  .tabs {
+    grid-template-columns: auto auto auto auto 1fr;
+  }
+}
+
+.tab {
+  margin: 0;
+  padding: 6px 8px 7px;
+  text-align: left;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab.active {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+
+.tab.active .badge {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.tab .badge.alert {
+  background: var(--danger);
+  color: var(--bg);
+}
+
+.panel {
+  display: none;
+  padding: 12px;
+}
+
+.panel.active {
+  display: block;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.card {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.card .value {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.card .label {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.card.alert {
+  background: var(--danger-soft);
+}
+
+.card.alert .value {
+  color: var(--danger);
+}
+
+.facts .fact {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.facts .fact:last-child {
+  border-bottom: 0;
+}
+
+.fact .label {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.fact .value {
+  word-break: break-all;
+}
+
+.entry {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.entry:last-child {
+  border-bottom: 0;
+}
+
+.entry-head {
+  display: flex;
+  align-items: center;
+}
+
+.entry .name {
+  flex: 1;
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.entry .url,
+.entry .meta {
+  color: var(--muted);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.status {
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 17px;
+}
+
+.status.ok {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.status.redirect,
+.status.pending {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.status.failed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.message {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border-radius: 8px;
+  background: var(--surface);
+  word-break: break-all;
+}
+
+.message.error {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.message .time {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.console .message {
+  font-family: "Cascadia Mono", "DejaVu Sans Mono", Consolas, monospace;
+  font-size: 12px;
+}
+
+.empty {
+  margin: 24px 0;
+  color: var(--muted);
+  text-align: center;
+}
+</style>
+</head>
+<body>
+  <header class="top">
+    <div class="title-row">
+      <h1>Diagnostics</h1>
+      <button type="button" class="button small" id="clear">Clear</button>
+    </div>
+    <nav class="tabs">
+      <button type="button" class="tab active" id="tab-overview">Page</button>
+      <button type="button" class="tab" id="tab-errors">Errors <span class="badge" id="count-errors">0</span></button>
+      <button type="button" class="tab" id="tab-console">Console <span class="badge" id="count-console">0</span></button>
+      <button type="button" class="tab" id="tab-network">Network <span class="badge" id="count-network">0</span></button>
+    </nav>
+  </header>
+
+  <section class="panel active" id="panel-overview">
+    <div class="cards" id="cards"></div>
+    <div class="facts" id="facts"></div>
+  </section>
+
+  <section class="panel" id="panel-errors">
+    <div id="errors"></div>
+  </section>
+
+  <section class="panel console" id="panel-console">
+    <div id="console"></div>
+  </section>
+
+  <section class="panel" id="panel-network">
+    <div id="network"></div>
+  </section>
+</body>
+</html>

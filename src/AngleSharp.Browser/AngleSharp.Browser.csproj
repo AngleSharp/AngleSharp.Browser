@@ -7,8 +7,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Folder Include="Models\" />
     <AvaloniaResource Include="Assets\**" />
+    <!-- the browser's own pages (diagnostics, settings, about) are rendered like any website -->
+    <EmbeddedResource Include="Pages\*.html;Pages\*.css;Pages\*.png" />
   </ItemGroup>
 
   <ItemGroup>

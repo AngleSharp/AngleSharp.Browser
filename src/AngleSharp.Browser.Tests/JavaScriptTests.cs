@@ -57,6 +57,19 @@ public class JavaScriptTests
     }
 
     [Test]
+    public async Task ClassListToggleTakesForceIntoAccount()
+    {
+        await _engine.LoadHtmlAsync("<p id=out class=a>ok</p>", Address);
+
+        var result = await _engine.EvaluateScriptAsync("""
+            var list = document.getElementById('out').classList;
+            [list.toggle('b', false), list.toggle('a', true), list.toggle('a'), list.toggle('a'), list.toggle('a', false), list.value].join()
+            """);
+
+        Assert.That(result, Is.EqualTo("false,true,false,true,false,"));
+    }
+
+    [Test]
     public async Task InlineScriptsBuildTheDocument()
     {
         await _engine.LoadHtmlAsync("""
@@ -83,6 +96,39 @@ public class JavaScriptTests
             """, Address);
 
         await Eventually(() => _engine.Document!.GetElementById("out")!.TextContent == "done");
+    }
+
+    [Test]
+    public async Task MutationObserversIterateTheirRecords()
+    {
+        // dev.to loops over the records with for...of, which failed with "The value is not iterable"
+        await _engine.LoadHtmlAsync("""
+            <p id=out>waiting</p>
+            <script>
+                new MutationObserver(function (records) { for (var record of records) { document.title = record.type; } })
+                    .observe(document.body, { childList: true });
+                document.body.appendChild(document.createElement('div'));
+            </script>
+            """, Address);
+
+        await Eventually(() => _engine.Document!.Title == "childList");
+    }
+
+    [Test]
+    public async Task IntervalsWithoutDelayYieldToThePage()
+    {
+        // without a delay AngleSharp's interval never yields and floods the event loop
+        await _engine.LoadHtmlAsync("""
+            <p id=out>waiting</p>
+            <script>
+                var ticks = 0;
+                var handle = setInterval(function () { if (++ticks === 5) { clearInterval(handle); document.getElementById('out').textContent = 'done'; } }, 0);
+                setTimeout(function () { document.title = 'negative'; }, -10);
+            </script>
+            """, Address);
+
+        await Eventually(() => _engine.Document!.GetElementById("out")!.TextContent == "done");
+        await Eventually(() => _engine.Document!.Title == "negative");
     }
 
     [Test]
@@ -141,6 +187,34 @@ public class JavaScriptTests
                 </script>
                 """u8.ToArray()),
             ["/items.json"] = ("application/json", """["first", "second"]"""u8.ToArray()),
+        });
+
+        await _engine.NavigateAsync(server.Address);
+
+        await Eventually(() => _engine.Document!.QuerySelectorAll("#list > li").Length == 2);
+    }
+
+    [Test]
+    public async Task FetchLoadsJsonIntoThePage()
+    {
+        // like dev.to's base data: fetch with headers, then read the body as JSON
+        using var server = new TestServer(new()
+        {
+            ["/"] = ("text/html", """
+                <ul id=list></ul>
+                <script>
+                fetch('/items.json', { headers: { Accept: 'application/json' }, credentials: 'same-origin' })
+                    .then(function (response) { return response.ok ? response.json() : []; })
+                    .then(function (data) {
+                        for (var name of data.items) {
+                            var item = document.createElement('li');
+                            item.textContent = name;
+                            document.getElementById('list').appendChild(item);
+                        }
+                    });
+                </script>
+                """u8.ToArray()),
+            ["/items.json"] = ("application/json", """{ "items": ["first", "second"] }"""u8.ToArray()),
         });
 
         await _engine.NavigateAsync(server.Address);

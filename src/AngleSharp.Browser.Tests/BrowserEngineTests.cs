@@ -3,6 +3,7 @@ namespace AngleSharp.Browser.Tests;
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using AngleSharp.Css.Dom;
 using AngleSharp.Dom;
@@ -186,6 +187,109 @@ public class BrowserEngineTests
     }
 
     [Test]
+    public async Task ScrollingWaitsForTheExtentOfAPageNotLaidOutYet()
+    {
+        // e.g. scripts keeping a loading page busy, so its first frame with content comes late
+        await _engine.LoadHtmlAsync("<p>short</p>");
+        await _engine.PrepareFrameAsync();
+        await _engine.EvaluateScriptAsync("document.body.insertAdjacentHTML('beforeend', '<div style=\"height: 3000px\"></div>')");
+        // the engine learns about the change from its mutation observer, a task of its own
+        await _engine.EvaluateScriptAsync("0");
+
+        var scrolling = _engine.ScrollToAsync(500, animate: false);
+        Assert.That(_engine.ScrollPosition, Is.EqualTo(500));
+
+        await _engine.PrepareFrameAsync();
+        await scrolling;
+        Assert.That(_engine.ScrollTop, Is.EqualTo(500));
+    }
+
+    [Test]
+    public async Task FramesFollowVisibleChangesAfterHiddenOnes()
+    {
+        await _engine.LoadHtmlAsync("""
+            <style>body { margin: 0 } #menu { position: absolute; top: 100%; display: none }</style>
+            <div style="position: relative"><a id="link" href="#" style="display: block; width: 50px; height: 20px">Go</a><div id="menu">Menu</div></div>
+            """);
+        await _engine.PrepareFrameAsync();
+        await _engine.PrepareFrameAsync();
+
+        // shown, measured and hidden again: nothing to see
+        await _engine.EvaluateScriptAsync("var m = document.getElementById('menu'); m.style.display = 'block'; m.getBoundingClientRect(); m.style.removeProperty('display')");
+        await _engine.EvaluateScriptAsync("0");
+        await _engine.PrepareFrameAsync();
+        _engine.MovePointer(200, 10);
+        Assert.That(_engine.Cursor, Is.EqualTo(BrowserCursor.Default));
+
+        await _engine.EvaluateScriptAsync("document.getElementById('link').style.width = '300px'");
+        await _engine.EvaluateScriptAsync("0");
+        await _engine.PrepareFrameAsync();
+        _engine.MovePointer(200, 11);
+
+        Assert.That(_engine.Cursor, Is.EqualTo(BrowserCursor.Pointer));
+    }
+
+    [Test]
+    public async Task ScrollingAScrollContainerMovesItsContent()
+    {
+        var items = string.Concat(Enumerable.Range(0, 10).Select(i => $"<a href='#i{i}' style='display: block; height: 30px'>Item {i}</a>"));
+        await _engine.LoadHtmlAsync($"<style>body {{ margin: 0 }}</style><div style='overflow-y: auto; height: 100px'>{items}</div><div style='height: 3000px'></div>");
+        await _engine.PrepareFrameAsync();
+        await _engine.MovePointerAsync(5, 5);
+        _engine.MovePointer(5, 5);
+        Assert.That(_engine.HoveredLink, Does.EndWith("#i0"));
+
+        await _engine.ScrollAsync(0, 60);
+        await _engine.PrepareFrameAsync();
+        _engine.MovePointer(5, 6);
+
+        Assert.That(_engine.HoveredLink, Does.EndWith("#i2"));
+        Assert.That(_engine.ScrollTop, Is.EqualTo(0));
+    }
+
+    [Test]
+    public async Task FramesFollowChangesOfBoxesOutOfTheFlow()
+    {
+        await _engine.LoadHtmlAsync("""
+            <style>body { margin: 0 }</style>
+            <div style="height: 2000px"></div>
+            <nav style="position: fixed; top: 0; left: 0"><a id="link" href="#" style="display: block; width: 50px; height: 20px">Go</a></nav>
+            """);
+        await _engine.PrepareFrameAsync();
+        await _engine.PrepareFrameAsync();
+        _engine.MovePointer(200, 10);
+        Assert.That(_engine.Cursor, Is.EqualTo(BrowserCursor.Default));
+
+        await _engine.EvaluateScriptAsync("document.getElementById('link').style.width = '300px'");
+        await _engine.EvaluateScriptAsync("0");
+        await _engine.PrepareFrameAsync();
+        _engine.MovePointer(200, 11);
+
+        Assert.That(_engine.Cursor, Is.EqualTo(BrowserCursor.Pointer));
+    }
+
+    [Test]
+    public async Task FramesFollowChangesOfBoxesInTheFlow()
+    {
+        await _engine.LoadHtmlAsync("""
+            <style>body { margin: 0 } #box { height: 40px }</style>
+            <div id="box"><a id="link" href="#" style="display: block; width: 50px; height: 20px">Go</a></div>
+            <p>After</p>
+            """);
+        await _engine.PrepareFrameAsync();
+        await _engine.PrepareFrameAsync();
+        _engine.MovePointer(200, 10);
+        Assert.That(_engine.Cursor, Is.EqualTo(BrowserCursor.Default));
+
+        await _engine.EvaluateScriptAsync("document.getElementById('link').style.width = '300px'");
+        await _engine.EvaluateScriptAsync("0");
+        await _engine.PrepareFrameAsync();
+        _engine.MovePointer(200, 11);
+
+        Assert.That(_engine.Cursor, Is.EqualTo(BrowserCursor.Pointer));
+    }
+
+    [Test]
     public async Task ScrollingMovesPageWithinBounds()
     {
         await _engine.LoadHtmlAsync("<div style='height: 3000px'>tall</div>");
@@ -263,6 +367,88 @@ public class BrowserEngineTests
         await _engine.NavigateAsync(server.Address);
 
         Assert.That(server.LastUserAgent, Is.EqualTo(_engine.Document!.DefaultView!.Navigator.UserAgent));
+    }
+
+    [Test]
+    public async Task RequestsCarryDefaultHeaders()
+    {
+        using var server = new TestServer(new()
+        {
+            ["/"] = ("text/html", "<p>Hi</p>"u8.ToArray()),
+        });
+        using var engine = new BrowserEngine(new BrowserOptions { DefaultHeaders = { ["Accept-Language"] = "de-AT", ["DNT"] = "1" } });
+
+        await engine.NavigateAsync(server.Address);
+
+        Assert.That(server.LastHeaders?["Accept-Language"], Is.EqualTo("de-AT"));
+        Assert.That(server.LastHeaders?["DNT"], Is.EqualTo("1"));
+    }
+
+    [Test]
+    public async Task DiagnosticsCollectRequestsAndConsoleOfTheCurrentPage()
+    {
+        using var server = new TestServer(new()
+        {
+            ["/"] = ("text/html", "<link rel=stylesheet href=/site.css><script>console.log('hello', 42)</script>"u8.ToArray()),
+            ["/site.css"] = ("text/css", "p { color: red }"u8.ToArray()),
+            ["/other"] = ("text/html", "<p>Other</p>"u8.ToArray()),
+        });
+
+        await _engine.NavigateAsync(server.Address);
+        await Eventually(() => _engine.Diagnostics.Requests.Count(m => !m.IsPending) == 2);
+
+        var requests = _engine.Diagnostics.Requests;
+        Assert.That(requests.Select(m => m.Url), Is.EqualTo(new[] { server.Address, server.Address + "site.css" }));
+        Assert.That(requests[1].StatusCode, Is.EqualTo(System.Net.HttpStatusCode.OK));
+        Assert.That(requests[1].ContentType, Does.StartWith("text/css"));
+        var message = _engine.Diagnostics.Messages.Single();
+        Assert.That((message.Kind, message.Text), Is.EqualTo((DiagnosticKind.Console, "hello 42")));
+
+        await _engine.NavigateAsync(server.Address + "other");
+
+        Assert.That(_engine.Diagnostics.Requests.Select(m => m.Url), Is.EqualTo(new[] { server.Address + "other" }));
+        Assert.That(_engine.Diagnostics.Messages, Is.Empty);
+    }
+
+    [Test]
+    public async Task DiagnosticsCollectErrors()
+    {
+        await _engine.LoadHtmlAsync("<script>undefinedFunction()</script>");
+
+        Assert.That(_engine.Diagnostics.Messages.Single().Kind, Is.EqualTo(DiagnosticKind.Error));
+    }
+
+    [Test]
+    public async Task InvokeAsyncWiresUpDotNetEventHandlers()
+    {
+        using var engine = new BrowserEngine(new BrowserOptions { ViewportWidth = 800, ViewportHeight = 600, IsScriptingEnabled = false });
+        await engine.LoadHtmlAsync("<button id=apply>Apply</button><p id=out>before</p>");
+        var clicks = 0;
+
+        await engine.InvokeAsync(document => document!.GetElementById("apply")!.AddEventListener("click", (_, _) =>
+        {
+            clicks++;
+            document.GetElementById("out")!.TextContent = "after";
+        }));
+        var rect = await engine.InvokeAsync(document => document!.GetElementById("apply")!.GetBoundingClientRect());
+        await engine.ClickAsync(rect.X + rect.Width / 2, rect.Y + rect.Height / 2);
+
+        Assert.That(clicks, Is.EqualTo(1));
+        Assert.That(await engine.InvokeAsync(document => document!.GetElementById("out")!.TextContent), Is.EqualTo("after"));
+    }
+
+    [Test]
+    public async Task ColorSchemeIsReportedToMediaQueries()
+    {
+        _engine.ColorScheme = "dark";
+        await _engine.LoadHtmlAsync("<style>p { color: red } @media (prefers-color-scheme: dark) { p { color: blue } }</style><p id=text>Hi</p>");
+
+        var color = await _engine.InvokeAsync(document => document!.DefaultView!.GetComputedStyle(document.GetElementById("text")!).GetColor());
+        _engine.ColorScheme = "light";
+        var lightColor = await _engine.InvokeAsync(document => document!.DefaultView!.GetComputedStyle(document.GetElementById("text")!).GetColor());
+
+        Assert.That(color, Is.EqualTo("rgba(0, 0, 255, 1)"));
+        Assert.That(lightColor, Is.EqualTo("rgba(255, 0, 0, 1)"));
     }
 
     [Test]
@@ -511,6 +697,27 @@ public class BrowserEngineTests
         Assert.That(frame!.ScrollTop, Is.EqualTo(500));
         Assert.That(frame.IsScrollShiftable, Is.False);
         Assert.That(_engine.Cursor, Is.EqualTo(BrowserCursor.Pointer));
+    }
+
+    [Test]
+    public async Task ScrollingGoesOnWhileThePageIsBusy()
+    {
+        // dev.to lays out the page for each of its dropdowns on scroll, which keeps it busy for a minute
+        await _engine.LoadHtmlAsync("""
+            <header style='position: fixed; top: 0; height: 40px; width: 100%'>Menu</header><div style='height: 3000px'></div>
+            <script>document.addEventListener('scroll', function () { var end = Date.now() + 3000; while (Date.now() < end) {} });</script>
+            """);
+        await _engine.PrepareFrameAsync();
+        await _engine.PrepareFrameAsync();
+        _ = _engine.ScrollToAsync(500, animate: false);
+        await Task.Delay(500);
+
+        var watch = Stopwatch.StartNew();
+        _ = _engine.ScrollToAsync(1000, animate: false);
+        var frame = await _engine.PrepareFrameAsync();
+
+        Assert.That(frame!.ScrollTop, Is.EqualTo(1000));
+        Assert.That(watch.ElapsedMilliseconds, Is.LessThan(1000));
     }
 
     private string WritePage(string name, string html)

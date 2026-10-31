@@ -1,6 +1,7 @@
 namespace AngleSharp.Browser;
 
 using System;
+using System.Collections.Generic;
 using AngleSharp.Io;
 using AngleSharp.Io.Dom;
 
@@ -22,6 +23,18 @@ public sealed class BrowserOptions
     /// AngleSharp.Io is used.
     /// </summary>
     public string? UserAgent { get; set; }
+
+    /// <summary>
+    /// Gets the headers added to every request, unless the request sets them
+    /// already (e.g., Accept-Language or DNT).
+    /// </summary>
+    public IDictionary<string, string> DefaultHeaders { get; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Gets or sets the color scheme reported to prefers-color-scheme, e.g.,
+    /// "light" or "dark". If null, queries for the preference never match.
+    /// </summary>
+    public string? ColorScheme { get; set; }
 
     /// <summary>
     /// Gets or sets if JavaScript should be evaluated.

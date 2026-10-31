@@ -1,0 +1,106 @@
+/* Shared by the browser's own pages (diagnostics, settings, about). */
+:root {
+  --bg: #ffffff;
+  --surface: #f6f8fc;
+  --surface-strong: #e9eef6;
+  --border: #dde3ea;
+  --text: #1f1f1f;
+  --muted: #5f6368;
+  --accent: #0b57d0;
+  --accent-soft: #d3e3fd;
+  --accent-text: #ffffff;
+  --danger: #b3261e;
+  --danger-soft: #fce8e6;
+  --success: #146c2e;
+  --success-soft: #e6f4ea;
+  --warning: #8a5300;
+  --warning-soft: #fef7e0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1f1f1f;
+    --surface: #282a2c;
+    --surface-strong: #333537;
+    --border: #3c4043;
+    --text: #e3e3e3;
+    --muted: #a8abb0;
+    --accent: #a8c7fa;
+    --accent-soft: #0842a0;
+    --accent-text: #062e6f;
+    --danger: #f2b8b5;
+    --danger-soft: #601410;
+    --success: #6dd58c;
+    --success-soft: #0f5223;
+    --warning: #ffb95c;
+    --warning-soft: #4a2c00;
+  }
+}
+
+html {
+  background: var(--bg);
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+h1, h2, h3 {
+  margin: 0;
+  font-weight: 600;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.button {
+  display: inline-block;
+  padding: 7px 16px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--bg);
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.button:hover {
+  background: var(--surface);
+}
+
+.button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.button.small {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.badge {
+  display: inline-block;
+  min-width: 8px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--surface-strong);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 17px;
+  text-align: center;
+}

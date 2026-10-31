@@ -27,6 +27,8 @@ sealed class TestServer : IDisposable
 
     public string? LastUserAgent { get; private set; }
 
+    public System.Collections.Specialized.NameValueCollection? LastHeaders { get; private set; }
+
     public void Dispose() => _listener.Close();
 
     private async Task ServeAsync()
@@ -46,6 +48,7 @@ sealed class TestServer : IDisposable
 
             var response = context.Response;
             LastUserAgent = context.Request.UserAgent;
+            LastHeaders = context.Request.Headers;
 
             if (_resources.TryGetValue(context.Request.Url!.AbsolutePath, out var resource))
             {

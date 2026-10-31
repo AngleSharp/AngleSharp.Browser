@@ -79,7 +79,16 @@ partial class BrowserEngine
 
         lock (_scrollLock)
         {
-            _scrollTarget = Math.Round(Math.Clamp(getTarget(_scrollTarget), 0, Volatile.Read(ref _maxScrollTop)));
+            var max = Volatile.Read(ref _maxScrollTop);
+
+            // a page not laid out since it changed (e.g. while scripts keep it busy loading) has
+            // no extent yet, the next frame clamps to it (see UpdateScrollExtent)
+            if (max == 0 && Volatile.Read(ref _scrollExtentVersion) != Volatile.Read(ref _layoutVersion))
+            {
+                max = double.MaxValue;
+            }
+
+            _scrollTarget = Math.Round(Math.Clamp(getTarget(_scrollTarget), 0, max));
             _scrollVersion++;
             _scrollSettled ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             settled = _scrollSettled;
@@ -100,6 +109,7 @@ partial class BrowserEngine
         if (isJump)
         {
             OnScrollChanged();
+            InvalidateBusyFrame();
         }
 
         return settled.Task;
@@ -134,6 +144,7 @@ partial class BrowserEngine
         if (isChanged)
         {
             OnScrollChanged();
+            InvalidateBusyFrame();
         }
 
         SyncScroll();
@@ -258,12 +269,31 @@ partial class BrowserEngine
     private void UpdateScrollExtent(double contentHeight, int layoutVersion)
     {
         var max = Math.Max(0, contentHeight - ViewportHeight);
-        _scrollExtentVersion = layoutVersion;
+        Volatile.Write(ref _scrollExtentVersion, layoutVersion);
 
         if (Volatile.Read(ref _maxScrollTop) != max)
         {
             Volatile.Write(ref _maxScrollTop, max);
+
+            lock (_scrollLock)
+            {
+                _scrollTarget = Math.Min(_scrollTarget, max);
+                _scrollPosition = Math.Min(_scrollPosition, max);
+            }
+
             OnScrollChanged();
+        }
+    }
+
+    /// <summary>
+    /// The DOM only follows the scroll position once the page is free, which may take long while
+    /// a script runs; until then, frames are made by moving the last one (see PrepareFrameAsync).
+    /// </summary>
+    private void InvalidateBusyFrame()
+    {
+        if (_gate.CurrentCount == 0)
+        {
+            Invalidated?.Invoke(this, EventArgs.Empty);
         }
     }
 

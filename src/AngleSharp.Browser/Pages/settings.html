@@ -1,0 +1,254 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Settings</title>
+<style>
+{{styles}}
+
+html,
+body {
+  background: var(--surface);
+}
+
+.page {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 28px 24px 24px;
+}
+
+.intro {
+  margin-bottom: 20px;
+}
+
+.intro h1 {
+  font-size: 22px;
+  font-weight: 500;
+}
+
+.intro p {
+  margin: 4px 0 0;
+}
+
+.section {
+  margin-bottom: 16px;
+  padding: 6px 20px;
+  border-radius: 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.section h2 {
+  padding: 12px 0 4px;
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.setting {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.setting:last-child {
+  border-bottom: 0;
+}
+
+.setting .label {
+  display: block;
+  font-weight: 600;
+}
+
+.setting .hint {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.setting .field {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.setting textarea.field {
+  height: 84px;
+  font-family: "Cascadia Mono", "DejaVu Sans Mono", Consolas, monospace;
+  font-size: 12px;
+}
+
+.setting .field.number {
+  width: 96px;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.check input {
+  margin: 0 12px 0 0;
+}
+
+.check .text {
+  flex: 1;
+}
+
+.choices {
+  display: flex;
+  margin-top: 8px;
+}
+
+.choice {
+  display: flex;
+  align-items: center;
+  margin-right: 20px;
+  cursor: pointer;
+}
+
+.choice input {
+  margin: 0 6px 0 0;
+}
+
+.presets {
+  margin-top: 8px;
+}
+
+.presets .button {
+  margin-right: 6px;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  padding-top: 4px;
+}
+
+.footer .status {
+  flex: 1;
+  color: var(--muted);
+}
+
+.footer .status.saved {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.footer .status.invalid {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.footer .button {
+  margin-left: 8px;
+}
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="intro">
+      <h1>Settings</h1>
+      <p class="muted">Changes apply to every window opened after saving them.</p>
+    </div>
+
+    <div class="section">
+      <h2>General</h2>
+      <div class="setting">
+        <span class="label">Start page</span>
+        <span class="hint">The page a new window opens.</span>
+        <input type="text" class="field" id="start-page">
+      </div>
+      <div class="setting">
+        <span class="label">Appearance</span>
+        <span class="hint">The browser's theme, also reported to pages as their preferred color scheme.</span>
+        <div class="choices">
+          <label class="choice"><input type="radio" name="theme" value="System" id="theme-system">System</label>
+          <label class="choice"><input type="radio" name="theme" value="Light" id="theme-light">Light</label>
+          <label class="choice"><input type="radio" name="theme" value="Dark" id="theme-dark">Dark</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Content</h2>
+      <div class="setting">
+        <label class="check">
+          <input type="checkbox" id="scripting">
+          <span class="text">
+            <span class="label">Activate scripting</span>
+            <span class="hint">Run the JavaScript of pages (AngleSharp.Js).</span>
+          </span>
+        </label>
+      </div>
+      <div class="setting">
+        <span class="label">Default font size</span>
+        <span class="hint">In CSS pixels, used where pages do not set one.</span>
+        <input type="text" class="field number" id="font-size">
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Privacy and data</h2>
+      <div class="setting">
+        <label class="check">
+          <input type="checkbox" id="persistent">
+          <span class="text">
+            <span class="label">Keep browsing data</span>
+            <span class="hint">Store cookies, the web storage and the HTTP cache on disk instead of in memory.</span>
+          </span>
+        </label>
+      </div>
+      <div class="setting">
+        <span class="label">Cache directory</span>
+        <span class="hint">Where browsing data is kept. Leave empty for the default location.</span>
+        <input type="text" class="field" id="profile-directory">
+      </div>
+      <div class="setting">
+        <label class="check">
+          <input type="checkbox" id="do-not-track">
+          <span class="text">
+            <span class="label">Send "Do Not Track"</span>
+            <span class="hint">Ask sites not to track you (DNT header).</span>
+          </span>
+        </label>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Network</h2>
+      <div class="setting">
+        <span class="label">User agent</span>
+        <span class="hint">How the browser introduces itself to sites. Leave empty for the default of AngleSharp.</span>
+        <input type="text" class="field" id="user-agent">
+        <div class="presets">
+          <button type="button" class="button small" id="ua-default">Default</button>
+          <button type="button" class="button small" id="ua-chrome">Chrome</button>
+          <button type="button" class="button small" id="ua-firefox">Firefox</button>
+          <button type="button" class="button small" id="ua-safari">Safari</button>
+        </div>
+      </div>
+      <div class="setting">
+        <span class="label">Default headers</span>
+        <span class="hint">Sent with every request, one "Name: value" per line, e.g., Accept-Language: de-AT.</span>
+        <textarea class="field" id="headers"></textarea>
+      </div>
+    </div>
+
+    <div class="footer">
+      <span class="status" id="status"></span>
+      <button type="button" class="button" id="reset">Reset to defaults</button>
+      <button type="button" class="button" id="close">Close</button>
+      <button type="button" class="button primary" id="apply">Apply</button>
+    </div>
+  </div>
+</body>
+</html>

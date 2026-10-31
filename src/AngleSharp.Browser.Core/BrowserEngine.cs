@@ -1,6 +1,7 @@
 namespace AngleSharp.Browser;
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -13,10 +14,12 @@ using AngleSharp.Css;
 using AngleSharp.Css.Dom;
 using AngleSharp.Dom;
 using AngleSharp.Dom.Events;
+using AngleSharp.Html.Parser;
 using AngleSharp.Io;
 using AngleSharp.Io.Cookie;
 using AngleSharp.Js;
 using AngleSharp.Renderer;
+using AngleSharp.Scripting;
 using AngleSharp.Renderer.Rendering;
 
 /// <summary>
@@ -31,6 +34,26 @@ using AngleSharp.Renderer.Rendering;
 public sealed partial class BrowserEngine : IDisposable
 {
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromMilliseconds(200);
+
+    // An interval needs a delay that cannot complete synchronously (at least 1ms; browsers use
+    // 4ms once nested), a negative delay means 0 (HTML 8.6) instead of waiting forever.
+    private const string TimerClampScript = """
+        (function (w) {
+            function clamp(name, min) {
+                var timer = w[name];
+                // AngleSharp.Js 1.1.2 ignores assigning a window member, but not defining one
+                Object.defineProperty(w, name, {
+                    value: function (handler, timeout) { return timer.call(w, handler, Math.max(min, Number(timeout) || 0)); },
+                    writable: true,
+                    configurable: true,
+                });
+            }
+
+            clamp('setTimeout', 0);
+            clamp('setInterval', 1);
+        })(window);
+        """;
+    private const string ColorSchemeFeature = "prefers-color-scheme";
     private static readonly TimeSpan SettleDuration = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan InteractionDuration = TimeSpan.FromMilliseconds(600);
     private static readonly string[] TextContentTypes = [MimeTypeNames.Plain, MimeTypeNames.ApplicationJson, MimeTypeNames.DefaultJavaScript, MimeTypeNames.Css];
@@ -44,6 +67,7 @@ public sealed partial class BrowserEngine : IDisposable
     private readonly IEventLoop? _loop;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly NavigationHistory _history = new();
+    private readonly BrowserDiagnostics _diagnostics = new();
     private readonly Timer _heartbeat;
     private MutationObserver? _observer;
     private IDocument? _document;
@@ -87,6 +111,7 @@ public sealed partial class BrowserEngine : IDisposable
             ViewPortHeight = Math.Max(1, options.ViewportHeight),
             FontSize = options.FontSize,
             IsScripting = options.IsScriptingEnabled,
+            Preferences = CreatePreferences(options.ColorScheme),
         };
 
         var ioOptions = options.CreateIoOptions(opener?._ioOptions);
@@ -109,7 +134,9 @@ public sealed partial class BrowserEngine : IDisposable
 
         if (options.IsScriptingEnabled)
         {
-            config = config.WithJs();
+            config = config
+                .WithConsoleLogger(_ => new BrowserDiagnostics.ConsoleLogger(_diagnostics))
+                .WithJs();
         }
 
         // the top-level context shares the engine's history (window.history), frames get their own
@@ -138,13 +165,34 @@ public sealed partial class BrowserEngine : IDisposable
         // AngleSharp.Io only reports the user agent via the navigator, but some servers refuse requests without one
         foreach (var requester in _context.GetServices<IRequester>().OfType<BaseRequester>())
         {
-            requester.Requesting += (_, ev) => AddUserAgent(((RequestEvent)ev).Request, ioOptions.Navigator.UserAgent);
+            requester.Requesting += (_, ev) =>
+            {
+                var request = ((RequestEvent)ev).Request;
+                AddHeaders(request, ioOptions.Navigator.UserAgent, options.DefaultHeaders);
+                _diagnostics.OnRequesting(request);
+            };
+            requester.Requested += (_, ev) => _diagnostics.OnRequested(((RequestEvent)ev).Request, ((RequestEvent)ev).Response);
         }
 
         if (options.IsScriptingEnabled)
         {
             // the default style sheet lacks the rule from the HTML standard (15.3.1)
             _context.GetService<ICssDefaultStyleSheetProvider>()?.AppendDefault("noscript { display: none !important }");
+
+            // AngleSharp's setInterval with a delay of 0 schedules every round synchronously, so it
+            // never yields and floods the event loop until memory runs out (dev.to does this); the
+            // page's scripts get timers with the delays clamped before any of them runs (fixed in
+            // AngleSharp 1.9.0, remove this once referenced)
+            if (_context.GetService<IHtmlParser>() is HtmlParser parser && _context.GetService<JsScriptingService>() is { } scripting)
+            {
+                parser.Parsing += (_, ev) =>
+                {
+                    if (ev is AngleSharp.Html.Dom.Events.HtmlParseEvent { Document: { } document })
+                    {
+                        scripting.EvaluateScript(document, TimerClampScript, "text/javascript", "about:blank");
+                    }
+                };
+            }
         }
         // script errors (e.g., an API missing in the engine) would go unnoticed otherwise
         _context.AddEventListener("error", (_, ev) =>
@@ -182,6 +230,28 @@ public sealed partial class BrowserEngine : IDisposable
     /// Raised when an operation failed, e.g., a navigation or a script.
     /// </summary>
     public event EventHandler<Exception>? Error;
+
+    /// <summary>
+    /// Gets what happened while showing the current page (requests, errors, console output).
+    /// </summary>
+    public BrowserDiagnostics Diagnostics => _diagnostics;
+
+    /// <summary>
+    /// Gets or sets the color scheme reported to prefers-color-scheme, e.g., "light" or
+    /// "dark"; see <see cref="BrowserOptions.ColorScheme"/>.
+    /// </summary>
+    public string? ColorScheme
+    {
+        get => _device.Preferences.TryGetValue(ColorSchemeFeature, out var value) ? value : null;
+        set
+        {
+            if (value != ColorScheme)
+            {
+                _device.Preferences = CreatePreferences(value);
+                OnLayoutChanged();
+            }
+        }
+    }
 
     /// <summary>
     /// Gets the underlying browsing context.
@@ -356,14 +426,50 @@ public sealed partial class BrowserEngine : IDisposable
         }, cancellationToken);
 
     /// <summary>
+    /// Runs code against the current document, e.g., to read it or to wire up a page with .NET
+    /// event handlers. AngleSharp is not thread-safe, so code touching the DOM outside of event
+    /// handlers has to run like this.
+    /// </summary>
+    /// <param name="action">The code to run; it gets the current document, if any.</param>
+    /// <param name="cancellationToken">The token to cancel waiting for the engine.</param>
+    /// <returns>The value returned by the code.</returns>
+    public Task<T> InvokeAsync<T>(Func<IDocument?, T> action, CancellationToken cancellationToken = default) =>
+        RunExclusiveAsync(() =>
+        {
+            SyncActiveDocument();
+            return action(_document);
+        }, cancellationToken);
+
+    /// <summary>
+    /// Runs code against the current document; see <see cref="InvokeAsync{T}"/>.
+    /// </summary>
+    /// <param name="action">The code to run; it gets the current document, if any.</param>
+    /// <param name="cancellationToken">The token to cancel waiting for the engine.</param>
+    public Task InvokeAsync(Action<IDocument?> action, CancellationToken cancellationToken = default) =>
+        InvokeAsync(document =>
+        {
+            action(document);
+            return true;
+        }, cancellationToken);
+
+    /// <summary>
     /// Creates the engine of another window. It uses the same options and shares the profile
     /// (cookies, storage, caches), but has its own browsing context and history.
     /// </summary>
     /// <returns>The new engine, which the caller disposes.</returns>
-    public BrowserEngine CreateWindow()
+    public BrowserEngine CreateWindow() => CreateWindow(_options);
+
+    /// <summary>
+    /// Creates the engine of another window with other options (e.g., changed settings). It
+    /// shares the profile (cookies, storage, caches), so the profile directory of the given
+    /// options is not used.
+    /// </summary>
+    /// <param name="options">The options of the new engine.</param>
+    /// <returns>The new engine, which the caller disposes.</returns>
+    public BrowserEngine CreateWindow(BrowserOptions options)
     {
         ObjectDisposedException.ThrowIf(_isDisposed, this);
-        return new BrowserEngine(_options, this);
+        return new BrowserEngine(options, this);
     }
 
     /// <inheritdoc />
@@ -436,12 +542,29 @@ public sealed partial class BrowserEngine : IDisposable
     private static bool IsTextDocument(IDocument document) =>
         TextContentTypes.Contains(document.ContentType, StringComparer.OrdinalIgnoreCase);
 
-    private static void AddUserAgent(Request request, string userAgent)
+    private static void AddHeaders(Request request, string userAgent, IDictionary<string, string> defaults)
     {
         if (!request.Headers.ContainsKey(HeaderNames.UserAgent))
         {
             request.Headers[HeaderNames.UserAgent] = userAgent;
         }
+
+        foreach (var header in defaults)
+        {
+            request.Headers.TryAdd(header.Key, header.Value);
+        }
+    }
+
+    private static Dictionary<string, string> CreatePreferences(string? colorScheme)
+    {
+        var preferences = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrEmpty(colorScheme))
+        {
+            preferences[ColorSchemeFeature] = colorScheme;
+        }
+
+        return preferences;
     }
 
     private async Task LoadAsync(string url, bool isTraversal, CancellationToken cancellationToken)
@@ -489,6 +612,7 @@ public sealed partial class BrowserEngine : IDisposable
     {
         // the address shows where we are going right away, like in any browser
         var navigation = new PendingNavigation(Interlocked.Increment(ref _navigationId), url);
+        _diagnostics.OnNavigating();
         Volatile.Write(ref _pendingNavigation, navigation);
         Interlocked.Increment(ref _loadCount);
         OnStateChanged();
@@ -540,6 +664,7 @@ public sealed partial class BrowserEngine : IDisposable
             if (active is not null)
             {
                 _history.Push(active.Url, active);
+                _diagnostics.OnDocumentChanged(active.Url);
             }
 
             _title = string.Empty;
@@ -567,7 +692,14 @@ public sealed partial class BrowserEngine : IDisposable
     {
         ObjectDisposedException.ThrowIf(_isDisposed, this);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        return await RunEnteredAsync(action, cancellationToken).ConfigureAwait(false);
+    }
 
+    /// <summary>
+    /// Runs the action on the event loop, once the gate has been entered; releases it again.
+    /// </summary>
+    private async Task<T> RunEnteredAsync<T>(Func<T> action, CancellationToken cancellationToken)
+    {
         try
         {
             // AngleSharp is not thread-safe; the event loop serializes the work with scripts. A task
@@ -646,14 +778,14 @@ public sealed partial class BrowserEngine : IDisposable
     {
         if (!_isPainting)
         {
-            OnLayoutChanged();
+            OnLayoutChanged(isMutation: true);
         }
     }
 
-    private void OnLayoutChanged()
+    private void OnLayoutChanged(bool isMutation = false)
     {
         Interlocked.Increment(ref _layoutVersion);
-        Invalidate();
+        Invalidate(isMutation);
     }
 
     /// <summary>
@@ -672,11 +804,14 @@ public sealed partial class BrowserEngine : IDisposable
 
     private sealed record PendingNavigation(int Id, string Url);
 
-    private void Invalidate()
+    // anything but a mutation of the document (resources, time, hover) has to be laid out, a
+    // mutation may have left the last frame as it is (see PrepareFrame)
+    private void Invalidate(bool isMutation = false)
     {
         if (!_isSyncingScroll)
         {
             _needsLayout = true;
+            _needsFullLayout |= !isMutation;
         }
 
         Invalidated?.Invoke(this, EventArgs.Empty);
@@ -684,7 +819,11 @@ public sealed partial class BrowserEngine : IDisposable
 
     private void OnStateChanged() => StateChanged?.Invoke(this, EventArgs.Empty);
 
-    private void OnError(Exception ex) => Error?.Invoke(this, ex);
+    private void OnError(Exception ex)
+    {
+        _diagnostics.OnMessage(DiagnosticKind.Error, ex.Message);
+        Error?.Invoke(this, ex);
+    }
 
     private static string CreateErrorPage(string url, Exception ex) => $"""
         <!doctype html>
