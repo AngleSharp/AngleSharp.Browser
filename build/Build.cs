@@ -52,8 +52,6 @@ class Build : FalloutBuild
 
     string Version { get; set; }
 
-    IReadOnlyCollection<string> TargetFrameworks { get; set; }
-
     protected override void OnBuildInitialized()
     {
         var parser = new ReleaseNotesParser();
@@ -88,11 +86,6 @@ class Build : FalloutBuild
         Log.Information("Building version: {Version}", Version);
 
         TargetProjects = TargetLibNames.Select(name => Solution.GetProject(name).NotNull($"{name} could not be loaded!")).ToList();
-
-        TargetFrameworks = TargetProjects.SelectMany(project => project.GetTargetFrameworks()).Distinct().ToList();
-        TargetFrameworks.NotNull("No TargetFramework(s) found to build for!");
-
-        Log.Information("Target Framework(s): {Frameworks}", TargetFrameworks);
     }
 
     Target Clean => _ => _
