@@ -10,28 +10,41 @@
 
 AngleSharp.Browser brings everything from the AngleSharp ecosystem together in a set of packages that can either be a rendering (visible) browser; in form of a re-usable component.
 
-## Current Status
+![Vision showing the AngleSharp repository on GitHub](https://raw.githubusercontent.com/AngleSharp/AngleSharp.Browser/main/docs/screenshots/page.png)
 
-Proof of concept. The repository contains:
+## Packages
 
-- `AngleSharp.Browser.Core`: a UI-agnostic `BrowserEngine` wiring up AngleSharp, AngleSharp.Css, AngleSharp.Js, AngleSharp.Io and AngleSharp.Renderer. It navigates (with back / forward history), paints the current document into PNG frames and translates pointer, wheel and keyboard input into DOM interactions (hover, links, forms, focus, text entry, scrolling).
-- `AngleSharp.Browser`: an Avalonia desktop app hosting the engine in a reusable `BrowserView` control.
+| Package | Description |
+| --- | --- |
+| [AngleSharp.Browser](https://www.nuget.org/packages/AngleSharp.Browser/) | A UI-agnostic `BrowserEngine` wiring up AngleSharp, AngleSharp.Css, AngleSharp.Js, AngleSharp.Io and AngleSharp.Renderer. It navigates (with back / forward history), paints the current document and translates pointer, wheel and keyboard input into DOM interactions (hover, links, forms, focus, text entry, scrolling). |
+| [AngleSharp.Browser.Avalonia](https://www.nuget.org/packages/AngleSharp.Browser.Avalonia/) | A ready to use `BrowserView` control for showing web pages in Avalonia applications. |
+
+The repository also contains **Vision**, a sample browser showing how the packages are used.
 
 Rendering quality and speed are bound by AngleSharp.Renderer, which is still an early layout engine.
 
 ## Quick Start
 
-Run the browser (optionally with a start address):
+### In an Avalonia Application
 
-```bash
-dotnet run --project src/AngleSharp.Browser -- https://example.org
+```sh
+dotnet add package AngleSharp.Browser.Avalonia
 ```
 
-Cookies, web storage and the HTTP cache are persisted in a profile directory (by default in the local application data folder). Use `--profile <directory>` to pick another one or `--in-memory` to persist nothing.
+```xml
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:browser="using:AngleSharp.Browser.Avalonia">
+    <browser:BrowserView Source="https://example.org" />
+</Window>
+```
 
-The engine can also be used without any UI:
+### Without Any UI
 
-```csharp
+```sh
+dotnet add package AngleSharp.Browser
+```
+
+```cs
 using var engine = new BrowserEngine(new BrowserOptions
 {
     ProfileDirectory = null, // keep everything in memory
@@ -41,9 +54,31 @@ using var engine = new BrowserEngine(new BrowserOptions
 
 await engine.NavigateAsync("https://example.org");
 await engine.ClickAsync(40, 390);
-var frame = await engine.PaintAsync();
-await File.WriteAllBytesAsync("page.png", frame!.Data);
+var image = await engine.PaintAsync();
+await File.WriteAllBytesAsync("page.png", image!.Data);
 ```
+
+## Documentation
+
+The [docs](docs/README.md) cover the [engine](docs/general/02-Engine.md), [rendering](docs/general/03-Rendering.md), [input](docs/general/04-Input.md), [configuration](docs/general/05-Configuration.md), the [Avalonia control](docs/general/06-Avalonia.md), and have a collection of [examples](docs/tutorials/02-Examples.md).
+
+## Vision
+
+Vision is the sample browser of this repository: a proof of concept, not a product. Run it (optionally with a start address) from a clone:
+
+```bash
+dotnet run --project src/Vision -- https://example.org
+```
+
+Cookies, web storage and the HTTP cache are persisted in a profile directory (by default in the local application data folder). Use `--profile <directory>` to pick another one or `--in-memory` to persist nothing.
+
+The diagnostics show what a page did; they are HTML and CSS rendered by a second `BrowserView`, like the rest of Vision's own UI:
+
+![Vision showing Wikipedia with the diagnostics panel](https://raw.githubusercontent.com/AngleSharp/AngleSharp.Browser/main/docs/screenshots/diagnostics.png)
+
+| Settings | About |
+| --- | --- |
+| ![The settings of Vision](https://raw.githubusercontent.com/AngleSharp/AngleSharp.Browser/main/docs/screenshots/settings.png) | ![The about window of Vision in dark mode](https://raw.githubusercontent.com/AngleSharp/AngleSharp.Browser/main/docs/screenshots/about.png) |
 
 ## .NET Foundation
 

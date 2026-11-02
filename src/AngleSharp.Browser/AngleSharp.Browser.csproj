@@ -1,30 +1,29 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Description>A UI-agnostic browser engine bringing the AngleSharp ecosystem together.</Description>
+    <Product>AngleSharp.Browser</Product>
+    <PackageTags>html;css;javascript;browser;rendering;headless;anglesharp;angle</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
-    <AvaloniaResource Include="Assets\**" />
-    <!-- the browser's own pages (diagnostics, settings, about) are rendered like any website -->
-    <EmbeddedResource Include="Pages\*.html;Pages\*.css;Pages\*.png" />
+    <InternalsVisibleTo Include="AngleSharp.Browser.Tests" Key="002400000480000094000000060200000024000052534131000400000100010001adf274fa2b375134e8e4558d606f1a0f96f5cd0c6b99970f7cce9887477209d7c29f814e2508d8bd2526e99e8cd273bd1158a3984f1ea74830ec5329a77c6ff201a15edeb8b36ab046abd1bce211fe8dbb076d7d806f46b15bfda44def04ead0669971e96c5f666c9eda677f28824fff7aa90d32929ed91d529a7a41699893" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Avalonia" Version="12.1.1" />
-    <PackageReference Include="Avalonia.Desktop" Version="12.1.1" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1" />
-    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.1" />
-    <PackageReference Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.3">
-      <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
-      <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
-    </PackageReference>
-    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="AngleSharp" Version="1.9.1" />
+    <PackageReference Include="AngleSharp.Js" Version="1.1.4" />
+    <PackageReference Include="AngleSharp.Css" Version="1.3.1" />
+    <PackageReference Include="AngleSharp.Io" Version="1.2.2" />
+    <PackageReference Include="AngleSharp.Wasm" Version="1.1.0" />
+    <PackageReference Include="AngleSharp.Xml" Version="1.2.0" />
+    <PackageReference Include="AngleSharp.Renderer" Version="0.9.2" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\AngleSharp.Browser.Core\AngleSharp.Browser.Core.csproj" />
+    <!-- AngleSharp.Renderer is built against SkiaSharp 2.88, but works with 3.x; align with the version Avalonia uses -->
+    <PackageReference Include="SkiaSharp" Version="3.119.4" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="3.119.4" />
   </ItemGroup>
 </Project>

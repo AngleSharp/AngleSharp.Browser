@@ -1,0 +1,186 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Vision.ViewModels"
+        xmlns:browser="using:AngleSharp.Browser.Avalonia"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        x:Class="Vision.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Icon="/Assets/avalonia-logo.ico"
+        Title="{Binding WindowTitle}"
+        Width="1200"
+        Height="800"
+        MinWidth="480"
+        MinHeight="320">
+
+    <Window.KeyBindings>
+        <KeyBinding Gesture="Alt+Left" Command="{Binding GoBackCommand}" />
+        <KeyBinding Gesture="Alt+Right" Command="{Binding GoForwardCommand}" />
+        <KeyBinding Gesture="F5" Command="{Binding ReloadCommand}" />
+        <KeyBinding Gesture="Ctrl+R" Command="{Binding ReloadCommand}" />
+        <KeyBinding Gesture="Ctrl+N" Command="{Binding NewWindowCommand}" />
+        <KeyBinding Gesture="F12" Command="{Binding ToggleDiagnosticsCommand}" />
+    </Window.KeyBindings>
+
+    <Grid RowDefinitions="Auto,*">
+        <!-- the toolbar -->
+        <Border Grid.Row="0"
+                Background="{DynamicResource ChromeToolbarBrush}"
+                BorderBrush="{DynamicResource ChromeDividerBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="8,6">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="4">
+                <Button Grid.Column="0"
+                        Classes="icon"
+                        ToolTip.Tip="Back (Alt+Left)"
+                        Command="{Binding GoBackCommand}">
+                    <PathIcon Data="{StaticResource BackIcon}" />
+                </Button>
+                <Button Grid.Column="1"
+                        Classes="icon"
+                        ToolTip.Tip="Forward (Alt+Right)"
+                        Command="{Binding GoForwardCommand}">
+                    <PathIcon Data="{StaticResource ForwardIcon}" />
+                </Button>
+                <Button Grid.Column="2"
+                        Classes="icon"
+                        ToolTip.Tip="Reload (F5)"
+                        Command="{Binding ReloadCommand}">
+                    <PathIcon Data="{StaticResource ReloadIcon}" />
+                </Button>
+
+                <Border Grid.Column="3" Classes="omnibox" Margin="6,0">
+                    <Grid ColumnDefinitions="Auto,*">
+                        <Panel Grid.Column="0"
+                               Margin="12,0,10,0"
+                               Background="Transparent"
+                               ToolTip.Tip="{Binding SiteInfo}">
+                            <PathIcon Width="14"
+                                      Height="14"
+                                      Foreground="{DynamicResource ChromeMutedTextBrush}"
+                                      Data="{StaticResource SecureIcon}"
+                                      IsVisible="{Binding IsSecure}" />
+                            <PathIcon Width="14"
+                                      Height="14"
+                                      Foreground="{DynamicResource ChromeMutedTextBrush}"
+                                      Data="{StaticResource InfoIcon}"
+                                      IsVisible="{Binding !IsSecure}" />
+                        </Panel>
+                        <TextBox Grid.Column="1"
+                                 x:Name="AddressBox"
+                                 Classes="bare"
+                                 Margin="0,0,14,0"
+                                 PlaceholderText="Search or type a web address"
+                                 Text="{Binding Address}">
+                            <TextBox.KeyBindings>
+                                <KeyBinding Gesture="Enter" Command="{Binding NavigateCommand}" />
+                            </TextBox.KeyBindings>
+                        </TextBox>
+                    </Grid>
+                </Border>
+
+                <Panel Grid.Column="4">
+                    <Button Classes="icon" ToolTip.Tip="Customize and control Vision">
+                        <PathIcon Data="{StaticResource MoreIcon}" />
+                        <Button.Flyout>
+                            <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                <MenuItem Header="New window" InputGesture="Ctrl+N" Command="{Binding NewWindowCommand}">
+                                    <MenuItem.Icon>
+                                        <PathIcon Data="{StaticResource NewWindowIcon}" />
+                                    </MenuItem.Icon>
+                                </MenuItem>
+                                <Separator />
+                                <MenuItem Header="Diagnostics"
+                                          InputGesture="F12"
+                                          ToggleType="CheckBox"
+                                          IsChecked="{Binding IsDiagnosticsOpen, Mode=OneWay}"
+                                          Command="{Binding ToggleDiagnosticsCommand}">
+                                    <MenuItem.Icon>
+                                        <PathIcon Data="{StaticResource DiagnosticsIcon}" />
+                                    </MenuItem.Icon>
+                                </MenuItem>
+                                <MenuItem Header="Settings" Command="{Binding OpenSettingsCommand}">
+                                    <MenuItem.Icon>
+                                        <PathIcon Data="{StaticResource SettingsIcon}" />
+                                    </MenuItem.Icon>
+                                </MenuItem>
+                                <MenuItem Header="About" Command="{Binding OpenAboutCommand}">
+                                    <MenuItem.Icon>
+                                        <PathIcon Data="{StaticResource InfoIcon}" />
+                                    </MenuItem.Icon>
+                                </MenuItem>
+                            </MenuFlyout>
+                        </Button.Flyout>
+                    </Button>
+                    <!-- the page reported errors, which the diagnostics show -->
+                    <Ellipse Width="8"
+                             Height="8"
+                             Margin="0,5,5,0"
+                             HorizontalAlignment="Right"
+                             VerticalAlignment="Top"
+                             IsHitTestVisible="False"
+                             Fill="{DynamicResource ChromeAlertBrush}"
+                             IsVisible="{Binding HasErrors}" />
+                </Panel>
+            </Grid>
+        </Border>
+
+        <ProgressBar Grid.Row="0"
+                     VerticalAlignment="Bottom"
+                     IsIndeterminate="True"
+                     IsVisible="{Binding IsLoading}"
+                     Foreground="{DynamicResource ChromeAccentBrush}"
+                     Background="Transparent"
+                     MinHeight="2"
+                     Height="2"
+                     CornerRadius="0" />
+
+        <!-- the page, and the diagnostics of it on the right -->
+        <Grid Grid.Row="1" x:Name="ContentGrid" ColumnDefinitions="*,Auto,0">
+            <browser:BrowserView Grid.Column="0"
+                                  x:Name="View"
+                                  Engine="{Binding Engine}" />
+
+            <Border Grid.Column="0"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Bottom"
+                    MaxWidth="600"
+                    Padding="8,4"
+                    CornerRadius="0,6,0,0"
+                    Background="{DynamicResource ChromeBubbleBrush}"
+                    BorderBrush="{DynamicResource ChromeDividerBrush}"
+                    BorderThickness="0,1,1,0"
+                    IsHitTestVisible="False"
+                    IsVisible="{Binding HasStatus}">
+                <TextBlock Text="{Binding Status}"
+                           Foreground="{DynamicResource ChromeMutedTextBrush}"
+                           FontSize="12"
+                           TextTrimming="CharacterEllipsis" />
+            </Border>
+
+            <!-- a hairline, which is easier to grab than it looks -->
+            <GridSplitter Grid.Column="1"
+                          x:Name="DiagnosticsSplitter"
+                          Width="5"
+                          MinWidth="5"
+                          ResizeDirection="Columns"
+                          Background="Transparent"
+                          IsVisible="{Binding IsDiagnosticsOpen}">
+                <GridSplitter.Template>
+                    <ControlTemplate>
+                        <Border Background="{TemplateBinding Background}">
+                            <Rectangle Width="1" HorizontalAlignment="Right" Fill="{DynamicResource ChromeDividerBrush}" />
+                        </Border>
+                    </ControlTemplate>
+                </GridSplitter.Template>
+            </GridSplitter>
+
+            <browser:BrowserView Grid.Column="2"
+                                  x:Name="DiagnosticsView"
+                                  Engine="{Binding DiagnosticsEngine}"
+                                  IsVisible="{Binding IsDiagnosticsOpen}" />
+        </Grid>
+    </Grid>
+
+</Window>

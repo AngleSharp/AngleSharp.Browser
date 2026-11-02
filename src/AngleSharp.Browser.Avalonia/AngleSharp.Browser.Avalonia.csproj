@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Description>An Avalonia control displaying web pages with AngleSharp.Browser.</Description>
+    <Product>AngleSharp.Browser.Avalonia</Product>
+    <PackageTags>html;css;javascript;browser;webview;avalonia;anglesharp;angle</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AngleSharp.Browser\AngleSharp.Browser.csproj" />
+  </ItemGroup>
+</Project>

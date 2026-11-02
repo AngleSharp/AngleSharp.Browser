@@ -1,7 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
-    <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
@@ -12,6 +11,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\AngleSharp.Browser.Core\AngleSharp.Browser.Core.csproj" />
+    <ProjectReference Include="..\AngleSharp.Browser\AngleSharp.Browser.csproj" />
   </ItemGroup>
 </Project>
