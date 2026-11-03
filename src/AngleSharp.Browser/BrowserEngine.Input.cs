@@ -1,9 +1,11 @@
 namespace AngleSharp.Browser;
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using AngleSharp.Browser;
 using AngleSharp.Dom;
 using AngleSharp.Dom.Events;
 using AngleSharp.Html.Dom;
@@ -70,6 +72,11 @@ partial class BrowserEngine
     private int _hitTestVersion = -1;
     private IElement? _hovered;
     private IElement? _pressed;
+    // where the selection of the focused list box was last changed from, and what is active in it
+    private IElement? _listBoxAnchor;
+    private IElement? _listBoxActive;
+    // a list box whose selection changed when pressed, which it tells when released
+    private IElement? _changedListBox;
     private string? _hoveredLink;
     private BrowserCursor _cursor;
 
@@ -100,7 +107,11 @@ partial class BrowserEngine
         _lastPointer = (x, y);
         _hasPointer = true;
 
-        if (FindPointerTarget(x, y) is { } target)
+        if (_selectPopup is { } popup && popup.View.Contains(x, y))
+        {
+            SetPointerState(null, BrowserCursor.Default);
+        }
+        else if (FindPointerTarget(x, y) is { } target)
         {
             SetPointerState(target.Href, target.Cursor);
         }
@@ -140,17 +151,42 @@ partial class BrowserEngine
     public Task PointerDownAsync(double x, double y, InputModifiers modifiers = InputModifiers.None, CancellationToken cancellationToken = default) =>
         RunExclusiveAsync(() =>
         {
-            var target = HitTest(x, y);
+            var popup = _selectPopup;
+
+            // a press on the popup is for the popup alone, one elsewhere closes it
+            if (popup is not null && popup.View.Contains(x, y))
+            {
+                return;
+            }
+
+            CloseSelectPopup();
+            var hit = HitTest(x, y);
+            var target = ResolveListBoxTarget(hit, x, y);
             _pressed = target;
 
             if (target is not null)
             {
                 KeepAnimating(InteractionDuration);
 
-                if (Fire(target, CreateMouseEvent("mousedown", x, y, modifiers)))
+                if (Fire(target, CreateMouseEvent(target, "mousedown", x, y, modifiers)))
                 {
                     UpdateFocus(target);
+
+                    if (hit is IHtmlSelectElement select && target != select)
+                    {
+                        PressListBoxRow(select, target, modifiers);
+                    }
+                    else if (IsDropdown(target) && popup?.Select != target)
+                    {
+                        // a press on the select that is open just closed it
+                        ShowSelectPopup((IHtmlSelectElement)target);
+                    }
                 }
+            }
+            else if (hit is not null)
+            {
+                // something disabled takes no events, but a press on it still moves the focus
+                UpdateFocus(hit);
             }
         }, cancellationToken);
 
@@ -167,17 +203,45 @@ partial class BrowserEngine
     {
         var navigation = await RunExclusiveAsync(() =>
         {
-            var target = HitTest(x, y);
+            // a release on the popup chooses that row (also when pressed on the select, and
+            // dragged there); a press on it that ends elsewhere leaves it open
+            if (_selectPopup is { } popup && popup.View.Contains(x, y))
+            {
+                var row = popup.View.GetRowAt(x, y);
+                _pressed = null;
+
+                if (FormControls.IsSelectableOption(row))
+                {
+                    CommitSelectPopup(popup, row);
+                }
+
+                return null;
+            }
+
+            var target = ResolveListBoxTarget(HitTest(x, y), x, y);
             var pressed = _pressed;
             _pressed = null;
+            var changedListBox = _changedListBox;
+            _changedListBox = null;
 
             if (target is null)
             {
+                if (changedListBox is not null)
+                {
+                    FireChange(changedListBox);
+                }
+
                 return null;
             }
 
             KeepAnimating(InteractionDuration);
-            Fire(target, CreateMouseEvent("mouseup", x, y, modifiers));
+            Fire(target, CreateMouseEvent(target, "mouseup", x, y, modifiers));
+
+            if (changedListBox is not null)
+            {
+                FireChange(changedListBox);
+            }
+
             var clickTarget = pressed is null ? null : GetCommonAncestor(pressed, target);
             return clickTarget is null ? null : Click(clickTarget, x, y, modifiers);
         }, cancellationToken).ConfigureAwait(false);
@@ -214,6 +278,27 @@ partial class BrowserEngine
     /// </remarks>
     public async Task ScrollAsync(double deltaX, double deltaY, CancellationToken cancellationToken = default)
     {
+        // the wheel scrolls the popup below the pointer; the page scrolling closes it
+        if (_selectPopup is not null)
+        {
+            var isOnPopup = await RunExclusiveAsync(() =>
+            {
+                if (_selectPopup is { } popup && _hasPointer && popup.View.Contains(_lastPointer.X, _lastPointer.Y))
+                {
+                    SetSelectPopup(popup.Select, popup.Highlighted, popup.View.ScrollTop + deltaY);
+                    return true;
+                }
+
+                CloseSelectPopup();
+                return false;
+            }, cancellationToken).ConfigureAwait(false);
+
+            if (isOnPopup)
+            {
+                return;
+            }
+        }
+
         if (_hasPointer && FindPointerTarget(_lastPointer.X, _lastPointer.Y) is { IsInScrollContainer: false })
         {
             await RequestScroll(top => top + deltaY, animate: true).ConfigureAwait(false);
@@ -222,7 +307,7 @@ partial class BrowserEngine
 
         var scrolling = await RunExclusiveAsync(() =>
         {
-            var container = FindScrollContainer(_hovered?.Owner == _document ? _hovered : null, deltaY);
+            var container = FindScrollContainer(IsInPage(_hovered?.Owner) ? _hovered : null, deltaY);
 
             if (container is null)
             {
@@ -281,7 +366,7 @@ partial class BrowserEngine
     public Task TextInputAsync(string text, CancellationToken cancellationToken = default) =>
         RunExclusiveAsync(() =>
         {
-            var focused = _document?.ActiveElement;
+            var focused = FocusedDocument?.ActiveElement;
 
             if (FormControls.IsTextEntry(focused))
             {
@@ -330,6 +415,20 @@ partial class BrowserEngine
             return;
         }
 
+        // the popup is on top of the page: the row below the pointer gets highlighted
+        if (_selectPopup is { } popup && popup.View.Contains(x, y))
+        {
+            _lastPointer = (x, y);
+            _hasPointer = true;
+
+            if (isMove && FormControls.IsSelectableOption(popup.View.GetRowAt(x, y)) && popup.View.GetRowAt(x, y) != popup.Highlighted)
+            {
+                SetSelectPopup(popup.Select, popup.View.GetRowAt(x, y), popup.View.ScrollTop);
+            }
+
+            return;
+        }
+
         var target = FindPointerTarget(x, y);
         var element = target is { } found ? found.Element : HitTest(x, y);
         var previous = _hovered;
@@ -338,14 +437,14 @@ partial class BrowserEngine
 
         if (element != previous)
         {
-            if (previous is not null && previous.Owner == _document)
+            if (previous is not null && IsInPage(previous.Owner))
             {
-                Fire(previous, CreateMouseEvent("mouseout", x, y, InputModifiers.None));
+                Fire(previous, CreateMouseEvent(previous, "mouseout", x, y, InputModifiers.None));
             }
 
             if (element is not null)
             {
-                Fire(element, CreateMouseEvent("mouseover", x, y, InputModifiers.None));
+                Fire(element, CreateMouseEvent(element, "mouseover", x, y, InputModifiers.None));
             }
 
             _hovered = element;
@@ -354,10 +453,10 @@ partial class BrowserEngine
 
         if (element is not null && isMove)
         {
-            Fire(element, CreateMouseEvent("mousemove", x, y, InputModifiers.None));
+            Fire(element, CreateMouseEvent(element, "mousemove", x, y, InputModifiers.None));
         }
 
-        _harness.SetHoveredElement(element);
+        SetHoveredInDocuments(element);
 
         if (target is { } info)
         {
@@ -419,8 +518,121 @@ partial class BrowserEngine
         _hitTestVersion = version;
         _harness.MousePosition = position;
         var element = _harness.HoveredElement;
-        return element?.Owner == _document ? element : null;
+        return element?.Owner == _document ? HitTestInFrame(element, x, y) : null;
     }
+
+    /// <summary>
+    /// What the pointer is at in a list box, whose rows have no boxes of their own: a row, or the
+    /// select below the last one. Disabled ones don't take part in mouse events (null), as in browsers.
+    /// </summary>
+    private static IElement? ResolveListBoxTarget(IElement? hit, double x, double y)
+    {
+        if (hit is not IHtmlSelectElement select)
+        {
+            return hit;
+        }
+
+        if (select.IsDisabled)
+        {
+            return null;
+        }
+
+        if (!select.IsListBox())
+        {
+            return hit;
+        }
+
+        var row = select.GetListBoxRowAt(x, y);
+        return row is IHtmlOptionElement && !FormControls.IsSelectableOption(row) ? null : row ?? select;
+    }
+
+    /// <summary>
+    /// Changes the selection of a list box as a press on a row does: the row alone, with Ctrl (or
+    /// Cmd) toggling it, with Shift the rows from the last one pressed without Shift.
+    /// </summary>
+    private void PressListBoxRow(IHtmlSelectElement select, IElement row, InputModifiers modifiers)
+    {
+        if (!FormControls.IsSelectableOption(row))
+        {
+            return;
+        }
+
+        var selected = new List<IElement>();
+
+        if (select.IsMultiple && modifiers.HasFlag(InputModifiers.Shift))
+        {
+            selected.AddRange(FormControls.GetOptionRange(select, GetListBoxAnchor(select) ?? row, row));
+        }
+        else if (select.IsMultiple && (modifiers.HasFlag(InputModifiers.Control) || modifiers.HasFlag(InputModifiers.Meta)))
+        {
+            selected.AddRange(select.SelectedOptions);
+
+            if (!selected.Remove(row))
+            {
+                selected.Add(row);
+            }
+
+            _listBoxAnchor = row;
+        }
+        else
+        {
+            selected.Add(row);
+            _listBoxAnchor = row;
+        }
+
+        _listBoxActive = row;
+
+        if (FormControls.SetSelectedOptions(select, selected))
+        {
+            _changedListBox = select;
+        }
+
+        select.ScrollListBoxRowIntoView(row);
+    }
+
+    /// <summary>
+    /// Moves the selection of a list box to the next selectable option, with Shift extending it
+    /// from its anchor.
+    /// </summary>
+    private bool StepListBox(IHtmlSelectElement select, int delta, InputModifiers modifiers)
+    {
+        var options = select.Options.OfType<IElement>().ToList();
+        var active = GetListBoxActive(select);
+        var index = active is null ? (delta > 0 ? -1 : options.Count) : options.IndexOf(active);
+
+        do
+        {
+            index += delta;
+        }
+        while (index >= 0 && index < options.Count && !FormControls.IsSelectableOption(options[index]));
+
+        if (index < 0 || index >= options.Count)
+        {
+            return false;
+        }
+
+        var next = options[index];
+        var isExtending = select.IsMultiple && modifiers.HasFlag(InputModifiers.Shift);
+
+        if (!isExtending)
+        {
+            _listBoxAnchor = next;
+        }
+
+        _listBoxActive = next;
+        var hasChanged = FormControls.SetSelectedOptions(select, isExtending ? FormControls.GetOptionRange(select, GetListBoxAnchor(select) ?? next, next) : [next]);
+        select.ScrollListBoxRowIntoView(next);
+        return hasChanged;
+    }
+
+    private IElement? GetListBoxAnchor(IHtmlSelectElement select) =>
+        IsOptionOf(select, _listBoxAnchor) ? _listBoxAnchor : GetListBoxActive(select);
+
+    private IElement? GetListBoxActive(IHtmlSelectElement select) =>
+        IsOptionOf(select, _listBoxActive) ? _listBoxActive : select.SelectedOptions.LastOrDefault();
+
+    private static bool IsOptionOf(IHtmlSelectElement select, IElement? option) =>
+        option is not null && select.Contains(option);
 
     private Task? Click(IElement target, double x, double y, InputModifiers modifiers)
     {
@@ -434,7 +646,7 @@ partial class BrowserEngine
             FormControls.SetChecked(toggle, isRadio || !wasChecked);
         }
 
-        if (!Fire(target, CreateMouseEvent("click", x, y, modifiers)))
+        if (!Fire(target, CreateMouseEvent(target, "click", x, y, modifiers)))
         {
             if (toggle is not null)
             {
@@ -472,7 +684,7 @@ partial class BrowserEngine
                 return FollowHyperlink(anchor, anchor.Href, modifiers);
             case IHtmlAreaElement area:
                 return FollowHyperlink(area, area.Href, modifiers);
-            case IHtmlLabelElement label when label.Control is IElement control:
+            case IHtmlLabelElement label when FormControls.GetLabeledControl(label) is { } control:
                 return Click(control, x, y, modifiers);
             case IHtmlElement { LocalName: "summary", ParentElement: IHtmlDetailsElement details }:
                 details.IsOpen = !details.IsOpen;
@@ -489,6 +701,11 @@ partial class BrowserEngine
             return null;
         }
 
+        if (form.Owner is { } owner && !ReferenceEquals(owner, _document))
+        {
+            return NavigateInFrameAsync(owner, () => form.SubmitAsync(submitter));
+        }
+
         return TrackNavigationAsync(() => form.SubmitAsync(submitter), form.Action);
     }
 
@@ -497,20 +714,31 @@ partial class BrowserEngine
     {
         if (href.StartsWith("javascript:", StringComparison.OrdinalIgnoreCase))
         {
-            RunScript(Uri.UnescapeDataString(href["javascript:".Length..]));
+            // in the document of the link: one in an iframe has no say over the page
+            RunScript(element.Owner, Uri.UnescapeDataString(href["javascript:".Length..]));
             return null;
         }
 
         var target = new Url(href);
-        var current = new Url(_document!.Url);
+        var document = element.Owner ?? _document!;
+        var current = new Url(document.Url);
 
         if (target.Fragment is not null && target.Href.Split('#')[0] == current.Href.Split('#')[0])
         {
-            ScrollToFragment(target.Fragment);
+            ScrollToFragment(document, target.Fragment);
             return null;
         }
 
         var targetName = element.GetAttribute("target");
+        var security = document.Context?.Security ?? Sandboxes.None;
+
+        // what a sandboxed frame isn't allowed to open or navigate
+        if ((targetName is "_top" or "_parent" && !ReferenceEquals(document, _document) && security.HasFlag(Sandboxes.TopLevelNavigation)) ||
+            (security.HasFlag(Sandboxes.AuxiliaryNavigation) && targetName is not (null or "" or "_self" or "_parent" or "_top")))
+        {
+            return null;
+        }
+
         var isNewWindow = modifiers.HasFlag(InputModifiers.Control) || modifiers.HasFlag(InputModifiers.Meta) ||
             (!string.IsNullOrEmpty(targetName) && targetName is not ("_self" or "_parent" or "_top") && _context.FindChildFor(targetName) is null);
 
@@ -529,13 +757,31 @@ partial class BrowserEngine
             return TrackNavigationAsync(() => _context.OpenAsync(navigation), href);
         }
 
+        if (!ReferenceEquals(document, _document))
+        {
+            // the page itself for `_top`, the one around it for `_parent`, else the iframe
+            var aimed = targetName switch
+            {
+                "_top" => _context,
+                "_parent" => document.Context?.Parent ?? _context,
+                _ => document.Context ?? _context,
+            };
+
+            if (ReferenceEquals(aimed, _context))
+            {
+                return TrackNavigationAsync(() => _context.OpenAsync(DocumentRequest.Get(target, referer: document.DocumentUri)), href);
+            }
+
+            return NavigateInFrameAsync(document, () => aimed.OpenAsync(DocumentRequest.Get(target, referer: document.DocumentUri)));
+        }
+
         return TrackNavigationAsync(() => element.NavigateAsync(), href);
     }
 
-    private void ScrollToFragment(string fragment)
+    private void ScrollToFragment(IDocument document, string fragment)
     {
         var id = Uri.UnescapeDataString(fragment);
-        var element = _document!.GetElementById(id) ?? _document.GetElementsByName(id).FirstOrDefault();
+        var element = document.GetElementById(id) ?? document.GetElementsByName(id).FirstOrDefault();
 
         if (element is not null)
         {
@@ -543,7 +789,14 @@ partial class BrowserEngine
         }
         else if (id.Length == 0 || id.Equals("top", StringComparison.OrdinalIgnoreCase))
         {
-            ScrollPage(double.NegativeInfinity);
+            if (ReferenceEquals(document, _document))
+            {
+                ScrollPage(double.NegativeInfinity);
+            }
+            else
+            {
+                document.DocumentElement?.ScrollTo(0, 0);
+            }
         }
     }
 
@@ -555,6 +808,13 @@ partial class BrowserEngine
         }
 
         KeepAnimating(InteractionDuration);
+
+        // the popup takes the keys, the page doesn't get to see them
+        if (_selectPopup is { } popup)
+        {
+            HandleSelectPopupKey(popup, key, modifiers);
+            return null;
+        }
 
         if (!Fire(target, CreateKeyboardEvent("keydown", key, modifiers)))
         {
@@ -568,8 +828,13 @@ partial class BrowserEngine
             return null;
         }
 
-        var focused = _document!.ActiveElement;
+        var focused = FocusedDocument!.ActiveElement;
         var isTextEntry = FormControls.IsTextEntry(focused);
+
+        if (key != "Tab" && IsDropdown(focused) && HandleClosedDropdownKey((IHtmlSelectElement)focused!, key, modifiers))
+        {
+            return null;
+        }
 
         switch (key)
         {
@@ -594,10 +859,10 @@ partial class BrowserEngine
                 }
 
                 return null;
-            case "ArrowUp" or "ArrowDown" when focused is IHtmlSelectElement select:
-                if (FormControls.StepSelection(select, key == "ArrowUp" ? -1 : 1))
+            case "ArrowUp" or "ArrowDown" when focused is IHtmlSelectElement listBox && listBox.IsListBox():
+                if (StepListBox(listBox, key == "ArrowUp" ? -1 : 1, modifiers))
                 {
-                    FireChange(select);
+                    FireChange(listBox);
                 }
 
                 return null;
@@ -632,7 +897,7 @@ partial class BrowserEngine
 
     private IElement? GetKeyboardTarget()
     {
-        var document = _document;
+        var document = FocusedDocument;
         return document?.ActiveElement ?? document?.Body ?? document?.DocumentElement;
     }
 
@@ -658,15 +923,16 @@ partial class BrowserEngine
 
         while (focusable is not null && !FormControls.IsFocusable(focusable))
         {
-            focusable = focusable is IHtmlLabelElement { Control: IElement control } ? control : focusable.ParentElement;
+            focusable = focusable is IHtmlLabelElement label && FormControls.GetLabeledControl(label) is { } control ? control : focusable.ParentElement;
         }
 
-        var current = _document?.ActiveElement;
+        var current = FocusedDocument?.ActiveElement;
 
         if (focusable != current)
         {
             if (focusable is IHtmlElement element)
             {
+                (current as IHtmlElement)?.DoBlur();
                 element.DoFocus();
             }
             else
@@ -674,17 +940,21 @@ partial class BrowserEngine
                 (current as IHtmlElement)?.DoBlur();
             }
         }
+
+        // what is clicked in a document has the keyboard go there
+        _focusedFrameDocument = target.Owner is { } owner && !ReferenceEquals(owner, _document) ? owner : null;
     }
 
     private void MoveFocus(int direction)
     {
-        var candidates = _document!.All
+        var document = FocusedDocument!;
+        var candidates = document.All
             .Where(m => FormControls.IsFocusable(m) && !(int.TryParse(m.GetAttribute("tabindex"), out var index) && index < 0))
             .ToList();
 
         if (candidates.Count > 0)
         {
-            var current = candidates.IndexOf(_document.ActiveElement!);
+            var current = candidates.IndexOf(document.ActiveElement!);
             var next = current < 0
                 ? (direction > 0 ? 0 : candidates.Count - 1)
                 : (current + direction + candidates.Count) % candidates.Count;
@@ -726,18 +996,43 @@ partial class BrowserEngine
 
     private IElement? FindScrollContainer(IElement? element, double deltaY)
     {
-        var document = _document;
-
         if (!IsReadyForLayout())
         {
             return null;
         }
 
-        for (; element is not null && element != document?.Body && element != document?.DocumentElement; element = element.ParentElement)
+        for (; element is not null; element = element.ParentElement)
         {
+            var document = element.Owner;
+
+            if (element == document?.Body || element == document?.DocumentElement)
+            {
+                if (ReferenceEquals(document, _document) || document is null || GetFrameElement(document) is not { } frame)
+                {
+                    return null;
+                }
+
+                // the iframe scrolls what it shows, and once it can't what is around it does
+                var root = document.DocumentElement;
+
+                if (root is not null && frame.GetAttribute("scrolling") != "no")
+                {
+                    var maximum = root.GetScrollHeight() - root.GetClientHeight();
+                    var position = root.GetScrollTop();
+
+                    if ((deltaY < 0 && position > 0) || (deltaY > 0 && position < maximum))
+                    {
+                        return root;
+                    }
+                }
+
+                // on with the iframe, which the loop moves away from
+                element = frame;
+            }
+
             var overflow = element.ComputeCurrentStyle().GetPropertyValue("overflow-y");
 
-            if (overflow is "auto" or "scroll")
+            if (overflow is "auto" or "scroll" || (element is IHtmlSelectElement && element.IsListBox()))
             {
                 var max = element.GetScrollHeight() - element.GetClientHeight();
                 var top = element.GetScrollTop();
@@ -752,11 +1047,13 @@ partial class BrowserEngine
         return null;
     }
 
-    private void RunScript(string code)
+    private void RunScript(string code) => RunScript(_document, code);
+
+    private void RunScript(IDocument? document, string code)
     {
         try
         {
-            _document?.ExecuteScript(code);
+            document?.ExecuteScript(code);
         }
         catch (Exception ex)
         {
@@ -785,16 +1082,22 @@ partial class BrowserEngine
         Fire(element, new Event("change", true, false));
     }
 
-    private MouseEvent CreateMouseEvent(string type, double x, double y, InputModifiers modifiers) => new(
+    private MouseEvent CreateMouseEvent(IElement target, string type, double x, double y, InputModifiers modifiers)
+    {
+        var (clientX, clientY) = ToClient(target, x, y);
+        return CreateMouseEvent(target.Owner?.DefaultView ?? _document?.DefaultView, type, x, y, clientX, clientY, modifiers);
+    }
+
+    private static MouseEvent CreateMouseEvent(IWindow? view, string type, double x, double y, double clientX, double clientY, InputModifiers modifiers) => new(
         type,
         bubbles: true,
         cancelable: true,
-        view: _document?.DefaultView,
+        view: view,
         detail: 1,
         screenX: (int)x,
         screenY: (int)y,
-        clientX: (int)x,
-        clientY: (int)y,
+        clientX: (int)clientX,
+        clientY: (int)clientY,
         ctrlKey: modifiers.HasFlag(InputModifiers.Control),
         altKey: modifiers.HasFlag(InputModifiers.Alt),
         shiftKey: modifiers.HasFlag(InputModifiers.Shift),

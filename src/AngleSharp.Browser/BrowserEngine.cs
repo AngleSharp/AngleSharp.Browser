@@ -71,6 +71,7 @@ public sealed partial class BrowserEngine : IDisposable
     private readonly Timer _heartbeat;
     private MutationObserver? _observer;
     private IDocument? _document;
+    private IEventLoop? _eventLoop;
     private string _title = string.Empty;
     private PendingNavigation? _pendingNavigation;
     private int _navigationId;
@@ -119,7 +120,9 @@ public sealed partial class BrowserEngine : IDisposable
         _ioOptions = ioOptions;
         _cookies = opener?._cookies ?? new SynchronizedCookieProvider(new AdvancedCookieProvider(ioOptions.CookieHandler));
         var config = Configuration.Default
-            .WithEventLoop()
+            // one loop for the page and its iframes: scripts of all of them run on it, and the
+            // layout of the page holds it, as the DOM of an iframe is part of what it lays out
+            .WithEventLoop(context => _eventLoop is null ? _eventLoop = new JsEventLoop(context) : new FrameEventLoop(_eventLoop))
             .WithRenderDevice(_device)
             .WithXml()
             .WithCss()
@@ -657,6 +660,8 @@ public sealed partial class BrowserEngine : IDisposable
             _document = active;
             _hovered = null;
             _pressed = null;
+            _focusedFrameDocument = null;
+            _hoveredFrames.Clear();
             _pointerFrame = null;
             _wasReadyForLayout = false;
             ResetScrollPosition();

@@ -24,7 +24,7 @@ partial class BrowserEngine
     /// </summary>
     private sealed record PointerFrame(IDocument Document, RenderedFrame Frame, HitTestMap Map, Dictionary<IElement, PointerInfo> Infos, double ScrollTop, bool IsScrollShiftable, int LayoutVersion);
 
-    private readonly record struct PointerInfo(string? Href, bool IsTextEntry);
+    private readonly record struct PointerInfo(string? Href, bool IsTextEntry, bool IsListBox);
 
     private readonly record struct PointerTarget(IElement? Element, string? Href, BrowserCursor Cursor, bool IsInScrollContainer);
 
@@ -163,7 +163,9 @@ partial class BrowserEngine
             Invalidate();
         }
 
-        return new BrowserFrame(frame, () => OnFramePainted(document));
+        // the list of an open dropdown is on top of the frame
+        var shown = RefreshSelectPopup() is { } popup ? frame.WithOverlay(popup.Overlay) : frame;
+        return new BrowserFrame(shown, () => OnFramePainted(document));
     }
 
     /// <summary>
@@ -219,7 +221,7 @@ partial class BrowserEngine
         foreach (var element in map.Elements)
         {
             var link = FindLink(element, links);
-            infos[element] = new PointerInfo((link as IUrlUtilities)?.Href, FormControls.IsTextEntry(element));
+            infos[element] = new PointerInfo((link as IUrlUtilities)?.Href, FormControls.IsTextEntry(element), element.IsListBox());
         }
 
         return infos;
@@ -261,7 +263,7 @@ partial class BrowserEngine
         // a shiftable frame is shown shifted by the scrolling done since it was painted
         var frameY = frame.IsScrollShiftable ? y + ScrollPosition - frame.ScrollTop : y;
 
-        if (frame.Map.HitTest(x, frameY) is not { } hit || hit.Element.Owner != frame.Document)
+        if (frame.Map.HitTest(x, frameY) is not { } hit || !IsInPage(hit.Element.Owner))
         {
             return new PointerTarget(null, null, BrowserCursor.Default, false);
         }
@@ -275,7 +277,7 @@ partial class BrowserEngine
             _ when info.IsTextEntry => BrowserCursor.Text,
             _ => BrowserCursor.Default,
         };
-        return new PointerTarget(hit.Element, info.Href, cursor, hit.IsInScrollContainer);
+        return new PointerTarget(hit.Element, info.Href, cursor, hit.IsInScrollContainer || info.IsListBox);
     }
 
     /// <summary>

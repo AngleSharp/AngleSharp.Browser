@@ -3,6 +3,7 @@ using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.NUnit;
+using Avalonia.Input;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Styling;
@@ -178,6 +179,64 @@ public class BrowserViewTests
         });
 
         window.Close();
+    }
+
+    [AvaloniaTest]
+    public async Task ClickingADropdownShowsItsListAndChoosesARow()
+    {
+        var view = new BrowserView();
+        var window = Show(view);
+        var engine = new BrowserEngine(new BrowserOptions { IsScriptingEnabled = false });
+        view.Engine = engine;
+        await engine.LoadHtmlAsync("<style>html, body { margin: 0; height: 100%; background: rgb(255,0,0) } select { display: block; width: 300px; height: 20px }</style><select><option>a</option><option>b</option><option>c</option></select>");
+        await WaitUntil(() => engine.HasPaintedDocument);
+
+        // on the page, where the list goes
+        const int X = 280;
+        const int Y = 30;
+        await WaitUntilAsync(async () => IsRed(await GetPixelAsync(window, X, Y)));
+
+        window.MouseDown(new global::Avalonia.Point(10, 10), MouseButton.Left);
+        window.MouseUp(new global::Avalonia.Point(10, 10), MouseButton.Left);
+        await WaitUntil(() => engine.IsSelectPopupOpen);
+        await WaitUntilAsync(async () => !IsRed(await GetPixelAsync(window, X, Y)));
+
+        // the second row
+        window.MouseDown(new global::Avalonia.Point(10, 20 + 1 + (1.5 * 19)), MouseButton.Left);
+        window.MouseUp(new global::Avalonia.Point(10, 20 + 1 + (1.5 * 19)), MouseButton.Left);
+        await WaitUntil(() => !engine.IsSelectPopupOpen);
+        await WaitUntilAsync(async () => IsRed(await GetPixelAsync(window, X, Y)));
+
+        var value = await engine.InvokeAsync(document => ((AngleSharp.Html.Dom.IHtmlSelectElement)document!.QuerySelector("select")!).Value);
+        Assert.That(value, Is.EqualTo("b"));
+        window.Close();
+        engine.Dispose();
+    }
+
+    private static async Task<byte[]> GetPixelAsync(Window window, int x, int y)
+    {
+        await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+        using var frame = window.CaptureRenderedFrame();
+        return frame is null ? new byte[4] : GetPixel(frame, x, y);
+    }
+
+    private static async Task WaitUntilAsync(Func<Task<bool>> condition)
+    {
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+
+        while (!await condition())
+        {
+            Assert.That(watch.ElapsedMilliseconds, Is.LessThan(10000), "Timed out.");
+            await Task.Delay(10);
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
+    private static unsafe byte[] GetPixel(WriteableBitmap frame, int x, int y)
+    {
+        using var buffer = frame.Lock();
+        var pixel = (byte*)buffer.Address + (y * buffer.RowBytes) + (x * 4);
+        return buffer.Format == PixelFormat.Bgra8888 ? [pixel[0], pixel[1], pixel[2], pixel[3]] : [pixel[2], pixel[1], pixel[0], pixel[3]];
     }
 
     private static string CreatePage(string title, string background) =>

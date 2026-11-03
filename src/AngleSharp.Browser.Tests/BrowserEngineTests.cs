@@ -1,6 +1,7 @@
 namespace AngleSharp.Browser.Tests;
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -8,7 +9,9 @@ using System.Threading.Tasks;
 using AngleSharp.Css.Dom;
 using AngleSharp.Dom;
 using AngleSharp.Html.Dom;
+using AngleSharp.Html.Dom.Events;
 using AngleSharp.Io;
+using AngleSharp.Js;
 using NUnit.Framework;
 
 [TestFixture]
@@ -38,6 +41,425 @@ public class BrowserEngineTests
     public void NormalizeAddressCompletesUserInput(string input, string expected)
     {
         Assert.That(BrowserEngine.NormalizeAddress(input), Is.EqualTo(expected));
+    }
+
+    private async Task<(IDocument Nested, IHtmlInlineFrameElement Frame)> LoadFrameAsync(string frameHtml, string pageStyle = "")
+    {
+        var srcdoc = System.Net.WebUtility.HtmlEncode(frameHtml);
+        await _engine.LoadHtmlAsync($"<!doctype html><body style=\"margin:0\"><iframe id=\"frame\" srcdoc=\"{srcdoc}\" style=\"border:0;width:400px;height:200px;margin-left:50px;margin-top:30px;display:block;{pageStyle}\"></iframe></body>");
+        IHtmlInlineFrameElement frame = null!;
+        await _engine.InvokeAsync(document => frame = (IHtmlInlineFrameElement)document!.GetElementById("frame")!);
+        await Eventually(() => frame.ContentDocument?.ReadyState == DocumentReadyState.Complete);
+        await _engine.PrepareFrameAsync();
+        return (frame.ContentDocument!, frame);
+    }
+
+    [Test]
+    public async Task IframeShowsItsDocumentInItsBox()
+    {
+        await LoadFrameAsync("<!doctype html><body style='margin:0;background:#ff0000'>");
+
+        var frame = await _engine.PrepareFrameAsync();
+
+        Assert.That(PixelOf(frame, 100, 100), Is.EqualTo(((byte)255, (byte)0, (byte)0)));
+        Assert.That(PixelOf(frame, 10, 100), Is.EqualTo(((byte)255, (byte)255, (byte)255)));
+        Assert.That(PixelOf(frame, 100, 10), Is.EqualTo(((byte)255, (byte)255, (byte)255)));
+        Assert.That(PixelOf(frame, 460, 100), Is.EqualTo(((byte)255, (byte)255, (byte)255)));
+    }
+
+    [Test]
+    public async Task IframeClipsWhatItsDocumentOverflowsWith()
+    {
+        await LoadFrameAsync("<!doctype html><body style='margin:0'><div style='width:2000px;height:2000px;background:#00ff00'></div>");
+
+        var frame = await _engine.PrepareFrameAsync();
+
+        Assert.That(PixelOf(frame, 100, 100), Is.EqualTo(((byte)0, (byte)255, (byte)0)));
+        Assert.That(PixelOf(frame, 500, 100), Is.EqualTo(((byte)255, (byte)255, (byte)255)));
+        Assert.That(PixelOf(frame, 100, 300), Is.EqualTo(((byte)255, (byte)255, (byte)255)));
+    }
+
+    [Test]
+    public async Task IframeHasADefaultSize()
+    {
+        await _engine.LoadHtmlAsync("<!doctype html><iframe id=\"frame\" srcdoc=\"x\"></iframe>");
+        var (width, height) = await _engine.InvokeAsync(document =>
+        {
+            var box = document!.GetElementById("frame")!.GetBoundingClientRect();
+            return (box.Width, box.Height);
+        });
+
+        Assert.That(width, Is.EqualTo(304));
+        Assert.That(height, Is.EqualTo(154));
+    }
+
+    [Test]
+    public async Task ClickReachesTheElementInAnIframe()
+    {
+        var (nested, _) = await LoadFrameAsync("<!doctype html><body style='margin:0'><button id='b' style='width:100px;height:40px;margin:10px'>x</button>");
+        var clicks = new List<(double X, double Y)>();
+        await _engine.InvokeAsync(_ => nested.GetElementById("b")!.AddEventListener("click", (_, e) => clicks.Add((((MouseEvent)e).ClientX, ((MouseEvent)e).ClientY))));
+
+        await _engine.ClickAsync(50 + 30, 30 + 20);
+
+        Assert.That(clicks, Is.EqualTo(new[] { (30d, 20d) }));
+    }
+
+    [Test]
+    public async Task HoveringAnElementInAnIframeMatchesHoverThere()
+    {
+        var (nested, _) = await LoadFrameAsync("<!doctype html><style>#b:hover{background:#ff0000}</style><body style='margin:0'><div id='b' style='width:100px;height:40px'></div>");
+
+        await _engine.MovePointerAsync(50 + 10, 30 + 10);
+        var frame = await _engine.PrepareFrameAsync();
+
+        Assert.That(PixelOf(frame, 60, 40), Is.EqualTo(((byte)255, (byte)0, (byte)0)));
+    }
+
+    [Test]
+    public async Task TypingGoesToTheFieldInAnIframe()
+    {
+        var (nested, _) = await LoadFrameAsync("<!doctype html><body style='margin:0'><input id='i' style='width:100px;height:30px'>");
+
+        await _engine.ClickAsync(50 + 20, 30 + 10);
+        await _engine.TextInputAsync("Hello");
+
+        var value = await _engine.InvokeAsync(_ => ((IHtmlInputElement)nested.GetElementById("i")!).Value);
+        Assert.That(value, Is.EqualTo("Hello"));
+    }
+
+    [Test]
+    public async Task WheelScrollsTheIframeUnderThePointer()
+    {
+        var (nested, _) = await LoadFrameAsync("<!doctype html><body style='margin:0'><div style='height:2000px'></div>");
+
+        await _engine.MovePointerAsync(50 + 10, 30 + 10);
+        await _engine.ScrollAsync(0, 100);
+
+        var (inner, page) = await _engine.InvokeAsync(_ => (nested.DocumentElement!.GetScrollTop(), _engine.ScrollTop));
+        Assert.That(inner, Is.EqualTo(100));
+        Assert.That(page, Is.EqualTo(0));
+    }
+
+    [Test]
+    public async Task ScrollingAnIframePaintsItsDocumentMoved()
+    {
+        await LoadFrameAsync("<!doctype html><body style='margin:0'><div style='height:150px;background:#ff0000'></div><div style='height:2000px;background:#0000ff'></div>");
+
+        await _engine.MovePointerAsync(50 + 10, 30 + 10);
+        await _engine.ScrollAsync(0, 100);
+        var frame = await _engine.PrepareFrameAsync();
+
+        Assert.That(PixelOf(frame, 60, 30 + 10), Is.EqualTo(((byte)255, (byte)0, (byte)0)));
+        Assert.That(PixelOf(frame, 60, 30 + 60), Is.EqualTo(((byte)0, (byte)0, (byte)255)));
+    }
+
+    [Test]
+    public async Task WheelMovesThePageOnceTheIframeCannotScroll()
+    {
+        var srcdoc = "<!doctype html><body style='margin:0'>short";
+        await _engine.LoadHtmlAsync($"<!doctype html><body style=\"margin:0\"><iframe id=\"frame\" srcdoc=\"{srcdoc}\" style=\"border:0;width:400px;height:200px;display:block\"></iframe><div style=\"height:3000px\"></div></body>");
+        await _engine.PrepareFrameAsync();
+
+        await _engine.MovePointerAsync(10, 10);
+        await _engine.ScrollAsync(0, 100);
+
+        await Eventually(() => _engine.ScrollPosition > 0);
+    }
+
+    [Test]
+    public async Task ChangingTheDocumentOfAnIframeRepaintsThePage()
+    {
+        var (nested, _) = await LoadFrameAsync("<!doctype html><body style='margin:0'><div id='d' style='width:100px;height:100px;background:#ff0000'></div>");
+        await _engine.PrepareFrameAsync();
+
+        await _engine.InvokeAsync(_ => nested.GetElementById("d")!.SetAttribute("style", "width:100px;height:100px;background:#0000ff"));
+
+        // the observer of the document in the iframe tells the page when the event loop gets to it
+        var stopwatch = Stopwatch.StartNew();
+        BrowserFrame frame;
+
+        do
+        {
+            await Task.Delay(20);
+            frame = await _engine.PrepareFrameAsync();
+        }
+        while (PixelOf(frame, 60, 40) != ((byte)0, (byte)0, (byte)255) && stopwatch.ElapsedMilliseconds < 5000);
+
+        Assert.That(PixelOf(frame, 60, 40), Is.EqualTo(((byte)0, (byte)0, (byte)255)));
+    }
+
+    [Test]
+    public async Task LinkInAnIframeNavigatesTheIframe()
+    {
+        var page = Path.Combine(_directory, "other.html");
+        File.WriteAllText(page, "<!doctype html><title>other</title><p>other</p>");
+        var address = new Uri(page).AbsoluteUri;
+        var (_, frame) = await LoadFrameAsync($"<!doctype html><body style='margin:0'><a id='a' href='{address}' style='display:block;width:100px;height:40px'>go</a>");
+        var url = _engine.Url;
+
+        await _engine.ClickAsync(50 + 10, 30 + 10);
+        await Eventually(() => frame.ContentDocument?.Title == "other");
+
+        Assert.That(_engine.Url, Is.EqualTo(url));
+    }
+
+    [Test]
+    public async Task AnIframeGoingAwayLeavesTheTasksOfThePage()
+    {
+        var page = Path.Combine(_directory, "other.html");
+        File.WriteAllText(page, "<!doctype html><title>other</title>");
+        var address = new Uri(page).AbsoluteUri;
+        var (_, frame) = await LoadFrameAsync($"<!doctype html><body style='margin:0'><a href='{address}' style='display:block;width:100px;height:40px'>go</a>");
+        await _engine.EvaluateScriptAsync("window.ran = 0; setTimeout(function () { window.ran = 1; }, 300);");
+
+        await _engine.ClickAsync(50 + 10, 30 + 10);
+        await Eventually(() => frame.ContentDocument?.Title == "other");
+        await _engine.InvokeAsync(_ => frame.ContentDocument?.Dispose());
+
+        var stopwatch = Stopwatch.StartNew();
+        var ran = "0";
+
+        while (ran != "1" && stopwatch.ElapsedMilliseconds < 5000)
+        {
+            await Task.Delay(50);
+            ran = Convert.ToString(await _engine.EvaluateScriptAsync("window.ran"), System.Globalization.CultureInfo.InvariantCulture) ?? "0";
+        }
+
+        Assert.That(ran, Is.EqualTo("1"));
+    }
+
+    [Test]
+    public async Task LinkWithTargetTopInAnIframeNavigatesThePage()
+    {
+        var page = Path.Combine(_directory, "other.html");
+        File.WriteAllText(page, "<!doctype html><title>other</title><p>other</p>");
+        var address = new Uri(page).AbsoluteUri;
+        await LoadFrameAsync($"<!doctype html><body style='margin:0'><a id='a' target='_top' href='{address}' style='display:block;width:100px;height:40px'>go</a>");
+
+        await _engine.ClickAsync(50 + 10, 30 + 10);
+
+        await Eventually(() => _engine.Title == "other");
+    }
+
+    /// <summary>
+    /// Serves pages for two origins (the same server by its address and by its name).
+    /// </summary>
+    private sealed class TwoOriginSite : IDisposable
+    {
+        private readonly System.Net.Sockets.TcpListener _listener = new(System.Net.IPAddress.Loopback, 0);
+        private readonly Dictionary<string, (string Headers, string Body)> _pages = [];
+
+        public TwoOriginSite()
+        {
+            _listener.Start();
+            _ = AcceptAsync();
+        }
+
+        private int Port => ((System.Net.IPEndPoint)_listener.LocalEndpoint).Port;
+
+        public string PageOrigin => $"http://127.0.0.1:{Port}";
+
+        public string OtherOrigin => $"http://localhost:{Port}";
+
+        public void Add(string path, string body, string headers = "") => _pages[path] = (headers, body);
+
+        public void Dispose() => _listener.Stop();
+
+        private async Task AcceptAsync()
+        {
+            try
+            {
+                while (true)
+                {
+                    var client = await _listener.AcceptTcpClientAsync();
+                    _ = ServeAsync(client);
+                }
+            }
+            catch (Exception ex) when (ex is ObjectDisposedException or System.Net.Sockets.SocketException)
+            {
+            }
+        }
+
+        private async Task ServeAsync(System.Net.Sockets.TcpClient client)
+        {
+            using (client)
+            {
+                var stream = client.GetStream();
+                using var reader = new StreamReader(stream, leaveOpen: true);
+                var path = (await reader.ReadLineAsync())?.Split(' ')[1] ?? "/";
+
+                while (!string.IsNullOrEmpty(await reader.ReadLineAsync()))
+                {
+                }
+
+                var (headers, body) = _pages.GetValueOrDefault(path.Split('?')[0], (string.Empty, string.Empty));
+                var content = System.Text.Encoding.UTF8.GetBytes(body);
+                var head = $"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {content.Length}\r\nConnection: close\r\n{headers}\r\n";
+                await stream.WriteAsync(System.Text.Encoding.ASCII.GetBytes(head));
+                await stream.WriteAsync(content);
+            }
+        }
+    }
+
+    private async Task<(IDocument Page, IHtmlInlineFrameElement Frame)> LoadTwoOriginsAsync(TwoOriginSite site, string frameAttributes, string frameAddress)
+    {
+        site.Add("/page", $"<!doctype html><body style=\"margin:0\"><iframe id=\"frame\" {frameAttributes} src=\"{frameAddress}\" style=\"border:0;width:400px;height:200px;display:block\"></iframe></body>");
+        await _engine.NavigateAsync(site.PageOrigin + "/page");
+        IDocument page = null!;
+        IHtmlInlineFrameElement frame = null!;
+        await _engine.InvokeAsync(document =>
+        {
+            page = document!;
+            frame = (IHtmlInlineFrameElement)document!.GetElementById("frame")!;
+        });
+        return (page, frame);
+    }
+
+    private async Task<string?> EvalInAsync(IDocument document, string script) =>
+        await _engine.InvokeAsync(_ => Convert.ToString(document.ExecuteScript(script), System.Globalization.CultureInfo.InvariantCulture));
+
+    [Test]
+    public async Task PageCannotReachAFrameOfAnotherOrigin()
+    {
+        using var site = new TwoOriginSite();
+        site.Add("/frame", "<!doctype html><title>secret</title>");
+        var (_, frame) = await LoadTwoOriginsAsync(site, string.Empty, site.OtherOrigin + "/frame");
+        await Eventually(() => frame.ContentDocument?.ReadyState == DocumentReadyState.Complete);
+
+        Assert.That(Convert.ToString(await _engine.EvaluateScriptAsync("String(document.getElementById('frame').contentDocument)")), Is.EqualTo("null"));
+        Assert.That(Convert.ToString(await _engine.EvaluateScriptAsync("typeof document.getElementById('frame').contentWindow.document")), Is.EqualTo("undefined"));
+    }
+
+    [Test]
+    public async Task FrameOfAnotherOriginCannotReachThePage()
+    {
+        using var site = new TwoOriginSite();
+        site.Add("/frame", "<!doctype html><title>frame</title>");
+        var (_, frame) = await LoadTwoOriginsAsync(site, string.Empty, site.OtherOrigin + "/frame");
+        await Eventually(() => frame.ContentDocument?.ReadyState == DocumentReadyState.Complete);
+
+        Assert.That(await EvalInAsync(frame.ContentDocument!, "typeof parent.document"), Is.EqualTo("undefined"));
+        Assert.That(await EvalInAsync(frame.ContentDocument!, "typeof top.document"), Is.EqualTo("undefined"));
+    }
+
+    [Test]
+    public async Task FrameOfTheSameOriginCanReachThePage()
+    {
+        using var site = new TwoOriginSite();
+        site.Add("/frame", "<!doctype html><title>frame</title>");
+        var (_, frame) = await LoadTwoOriginsAsync(site, string.Empty, site.PageOrigin + "/frame");
+        await Eventually(() => frame.ContentDocument?.ReadyState == DocumentReadyState.Complete);
+
+        Assert.That(await EvalInAsync(frame.ContentDocument!, "typeof parent.document"), Is.EqualTo("object"));
+    }
+
+    [Test]
+    public async Task EngineStillSeesAndPaintsAFrameOfAnotherOrigin()
+    {
+        using var site = new TwoOriginSite();
+        site.Add("/frame", "<!doctype html><body style='margin:0;background:#ff0000'>");
+        var (_, frame) = await LoadTwoOriginsAsync(site, string.Empty, site.OtherOrigin + "/frame");
+        await Eventually(() => frame.ContentDocument?.ReadyState == DocumentReadyState.Complete);
+
+        var painted = await _engine.PrepareFrameAsync();
+
+        Assert.That(PixelOf(painted, 100, 100), Is.EqualTo(((byte)255, (byte)0, (byte)0)));
+    }
+
+    [Test]
+    public async Task MessageCrossesBetweenOrigins()
+    {
+        using var site = new TwoOriginSite();
+        site.Add("/frame", "<!doctype html><script>window.addEventListener('message', function (e) { window.seen = e.data.text + '|' + e.origin; e.source.postMessage('back', '*'); });</script>");
+        var (page, frame) = await LoadTwoOriginsAsync(site, string.Empty, site.OtherOrigin + "/frame");
+        await Eventually(() => frame.ContentDocument?.ReadyState == DocumentReadyState.Complete);
+
+        await EvalInAsync(page, "window.addEventListener('message', function (e) { window.reply = e.data + '|' + e.origin; }); document.getElementById('frame').contentWindow.postMessage({ text: 'hi' }, '*')");
+
+        var stopwatch = Stopwatch.StartNew();
+        string? reply = "undefined";
+
+        while (reply == "undefined" && stopwatch.ElapsedMilliseconds < 5000)
+        {
+            await Task.Delay(20);
+            reply = await EvalInAsync(page, "String(window.reply)");
+        }
+
+        Assert.That(reply, Is.EqualTo("back|" + site.OtherOrigin));
+        Assert.That(await EvalInAsync(frame.ContentDocument!, "window.seen"), Is.EqualTo("hi|" + site.PageOrigin));
+    }
+
+    [TestCase("X-Frame-Options: DENY\r\n")]
+    [TestCase("X-Frame-Options: SAMEORIGIN\r\n")]
+    [TestCase("Content-Security-Policy: frame-ancestors 'none'\r\n")]
+    public async Task FrameRefusingToBeShownStaysEmpty(string headers)
+    {
+        using var site = new TwoOriginSite();
+        site.Add("/frame", "<!doctype html><body style='margin:0;background:#ff0000'>", headers);
+        var (_, frame) = await LoadTwoOriginsAsync(site, string.Empty, site.OtherOrigin + "/frame");
+        await Task.Delay(200);
+
+        var painted = await _engine.PrepareFrameAsync();
+
+        Assert.That(frame.ContentDocument, Is.Null);
+        Assert.That(PixelOf(painted, 100, 100), Is.EqualTo(((byte)255, (byte)255, (byte)255)));
+    }
+
+    [Test]
+    public async Task SandboxedFrameRunsNoScripts()
+    {
+        using var site = new TwoOriginSite();
+        site.Add("/frame", "<!doctype html><title>start</title><script>document.title = 'ran';</script>");
+        var (_, frame) = await LoadTwoOriginsAsync(site, "sandbox", site.PageOrigin + "/frame");
+        await Eventually(() => frame.ContentDocument?.ReadyState == DocumentReadyState.Complete);
+
+        var title = await _engine.InvokeAsync(_ => frame.ContentDocument!.Title);
+
+        Assert.That(title, Is.EqualTo("start"));
+    }
+
+    [Test]
+    public async Task SandboxedFrameOfTheSameAddressIsOfAnotherOrigin()
+    {
+        using var site = new TwoOriginSite();
+        site.Add("/frame", "<!doctype html><script>window.seen = typeof parent.document;</script>");
+        var (_, frame) = await LoadTwoOriginsAsync(site, "sandbox=\"allow-scripts\"", site.PageOrigin + "/frame");
+        await Eventually(() => frame.ContentDocument?.ReadyState == DocumentReadyState.Complete);
+
+        Assert.That(await EvalInAsync(frame.ContentDocument!, "window.seen"), Is.EqualTo("undefined"));
+    }
+
+    [Test]
+    public async Task SandboxedFrameCannotNavigateThePage()
+    {
+        using var site = new TwoOriginSite();
+        site.Add("/frame", "<!doctype html><body style='margin:0'><a target='_top' href='/other' style='display:block;width:100px;height:40px'>go</a>");
+        site.Add("/other", "<!doctype html><title>other</title>");
+        var (page, frame) = await LoadTwoOriginsAsync(site, "sandbox", site.PageOrigin + "/frame");
+        await Eventually(() => frame.ContentDocument?.ReadyState == DocumentReadyState.Complete);
+        await _engine.PrepareFrameAsync();
+
+        await _engine.ClickAsync(10, 10);
+        await Task.Delay(200);
+
+        Assert.That(_engine.Title, Is.Not.EqualTo("other"));
+        Assert.That(_engine.Url, Is.EqualTo(site.PageOrigin + "/page"));
+    }
+
+    [Test]
+    public async Task JavaScriptLinkInAFrameRunsInTheFrame()
+    {
+        using var site = new TwoOriginSite();
+        site.Add("/frame", "<!doctype html><body style='margin:0'><a href='javascript:window.ranHere = 1' style='display:block;width:100px;height:40px'>go</a>");
+        var (page, frame) = await LoadTwoOriginsAsync(site, string.Empty, site.OtherOrigin + "/frame");
+        await Eventually(() => frame.ContentDocument?.ReadyState == DocumentReadyState.Complete);
+        await _engine.PrepareFrameAsync();
+
+        await _engine.ClickAsync(10, 10);
+
+        Assert.That(await EvalInAsync(frame.ContentDocument!, "String(window.ranHere)"), Is.EqualTo("1"));
+        Assert.That(await EvalInAsync(page, "String(window.ranHere)"), Is.EqualTo("undefined"));
     }
 
     [Test]
@@ -167,6 +589,656 @@ public class BrowserEngineTests
 
         Assert.That(check.IsChecked, Is.True);
         Assert.That(check.HasAttribute("checked"), Is.True);
+    }
+
+    [Test]
+    public async Task ClickingTheTextOfAWrappingLabelTogglesItsControl()
+    {
+        await _engine.LoadHtmlAsync("<label><input id=check type=checkbox> <span id=text>Accept the terms</span></label>");
+        var check = (IHtmlInputElement)_engine.Document!.GetElementById("check")!;
+
+        var (x, y) = CenterOf("text");
+        await _engine.ClickAsync(x, y);
+
+        Assert.That(check.IsChecked, Is.True);
+    }
+
+    [Test]
+    public async Task ClickingALabelWithAForAttributeOnlyTogglesTheNamedControl()
+    {
+        await _engine.LoadHtmlAsync("<label for=missing><input id=check type=checkbox> <span id=text>Accept the terms</span></label>");
+        var check = (IHtmlInputElement)_engine.Document!.GetElementById("check")!;
+
+        var (x, y) = CenterOf("text");
+        await _engine.ClickAsync(x, y);
+
+        Assert.That(check.IsChecked, Is.False);
+    }
+
+    private const double ListBoxRowHeight = 17.8;
+
+    private const string ListBoxStyle = "<style>body { margin: 0 } select { display: block; font: 14px/16px sans-serif; border: 0; padding: 0; width: 100px; box-sizing: border-box }</style>";
+
+    private async Task<IHtmlSelectElement> LoadListBoxAsync(string markup)
+    {
+        await _engine.LoadHtmlAsync(ListBoxStyle + markup);
+        await _engine.PrepareFrameAsync();
+        return (IHtmlSelectElement)_engine.Document!.QuerySelector("select")!;
+    }
+
+    private Task ClickListBoxRowAsync(int row, InputModifiers modifiers = InputModifiers.None) =>
+        _engine.ClickAsync(10, ((row + 0.5) * ListBoxRowHeight), modifiers);
+
+    private static string[] SelectedTexts(IHtmlSelectElement select) =>
+        select.SelectedOptions.Select(option => option.Text).ToArray();
+
+    [Test]
+    public async Task ClickingAListBoxRowSelectsOnlyIt()
+    {
+        var select = await LoadListBoxAsync("<select multiple size=4><option>a<option>b<option>c<option>d</select>");
+
+        await ClickListBoxRowAsync(0);
+        await ClickListBoxRowAsync(2);
+
+        Assert.That(SelectedTexts(select), Is.EqualTo(new[] { "c" }));
+        Assert.That(_engine.Document!.ActiveElement, Is.EqualTo(select));
+    }
+
+    [Test]
+    public async Task ControlClickingAListBoxRowTogglesIt()
+    {
+        var select = await LoadListBoxAsync("<select multiple size=4><option>a<option>b<option>c<option>d</select>");
+
+        await ClickListBoxRowAsync(0);
+        await ClickListBoxRowAsync(2, InputModifiers.Control);
+        Assert.That(SelectedTexts(select), Is.EqualTo(new[] { "a", "c" }));
+
+        await ClickListBoxRowAsync(0, InputModifiers.Meta);
+        Assert.That(SelectedTexts(select), Is.EqualTo(new[] { "c" }));
+    }
+
+    [Test]
+    public async Task ShiftClickingAListBoxRowSelectsFromTheAnchor()
+    {
+        var select = await LoadListBoxAsync("<select multiple size=4><option>a<option>b<option>c<option>d</select>");
+
+        await ClickListBoxRowAsync(1);
+        await ClickListBoxRowAsync(3, InputModifiers.Shift);
+        Assert.That(SelectedTexts(select), Is.EqualTo(new[] { "b", "c", "d" }));
+
+        // the anchor stays, so the range is replaced
+        await ClickListBoxRowAsync(0, InputModifiers.Shift);
+        Assert.That(SelectedTexts(select), Is.EqualTo(new[] { "a", "b" }));
+    }
+
+    [Test]
+    public async Task ModifiersDoNotExtendASingleSelectionListBox()
+    {
+        var select = await LoadListBoxAsync("<select size=3><option>a<option>b<option>c</select>");
+
+        await ClickListBoxRowAsync(0);
+        await ClickListBoxRowAsync(2, InputModifiers.Control);
+
+        Assert.That(SelectedTexts(select), Is.EqualTo(new[] { "c" }));
+    }
+
+    [Test]
+    public async Task ListBoxClicksFireEventsInTheOrderOfBrowsers()
+    {
+        var select = await LoadListBoxAsync("<select multiple size=2><option id=a>a<option>b</select>");
+        var events = new List<string>();
+
+        foreach (var name in new[] { "mousedown", "input", "change", "click" })
+        {
+            select.AddEventListener(name, (_, ev) => events.Add($"{name}@{((IElement)ev.OriginalTarget!).LocalName}"));
+        }
+
+        await ClickListBoxRowAsync(0);
+        Assert.That(events, Is.EqualTo(new[] { "mousedown@option", "input@select", "change@select", "click@option" }));
+
+        // nothing changes, so nothing is told
+        events.Clear();
+        await ClickListBoxRowAsync(0);
+        Assert.That(events, Is.EqualTo(new[] { "mousedown@option", "click@option" }));
+    }
+
+    [Test]
+    public async Task DisabledListBoxRowsCannotBeSelected()
+    {
+        var select = await LoadListBoxAsync("<select size=5><optgroup label=G><option>a<option disabled>b</optgroup><optgroup label=H disabled><option>c</optgroup></select>");
+        var events = new List<string>();
+        select.AddEventListener("click", (_, ev) => events.Add(((IElement)ev.OriginalTarget!).LocalName));
+
+        // the label of a group takes clicks, but selects nothing
+        await ClickListBoxRowAsync(0);
+        Assert.That(events, Is.EqualTo(new[] { "optgroup" }));
+        Assert.That(SelectedTexts(select), Is.Empty);
+
+        events.Clear();
+        await ClickListBoxRowAsync(2);
+        await ClickListBoxRowAsync(4);
+        Assert.That(events, Is.Empty);
+        Assert.That(SelectedTexts(select), Is.Empty);
+
+        await ClickListBoxRowAsync(1);
+        Assert.That(SelectedTexts(select), Is.EqualTo(new[] { "a" }));
+    }
+
+    [Test]
+    public async Task ADisabledListBoxTakesNoClicks()
+    {
+        var select = await LoadListBoxAsync("<select size=2 disabled><option>a<option>b</select>");
+
+        await ClickListBoxRowAsync(0);
+
+        Assert.That(SelectedTexts(select), Is.Empty);
+        Assert.That(_engine.Document!.ActiveElement, Is.Not.EqualTo(select));
+    }
+
+    [Test]
+    public async Task PressingADisabledListBoxMovesTheFocusAway()
+    {
+        await _engine.LoadHtmlAsync(ListBoxStyle + "<select size=2 disabled><option>a<option>b</select><input id=field>");
+        await _engine.PrepareFrameAsync();
+        var field = (IHtmlInputElement)_engine.Document!.GetElementById("field")!;
+        var (x, y) = CenterOf("field");
+        await _engine.ClickAsync(x, y);
+        Assert.That(field.IsFocused, Is.True);
+
+        await ClickListBoxRowAsync(0);
+
+        Assert.That(field.IsFocused, Is.False);
+    }
+
+    [Test]
+    public async Task ScrollingAListBoxPaintsTheRowsFurtherDown()
+    {
+        await LoadListBoxAsync("<select multiple size=2><option>a<option>b<option selected>c<option selected>d</select>");
+        var select = _engine.Document!.QuerySelector("select")!;
+        select.SetScrollTop(0);
+        var top = await _engine.PrepareFrameAsync();
+        var unselected = PixelOf(top!, 90, 4);
+
+        select.SetScrollTop(2 * ListBoxRowHeight);
+        var scrolled = await _engine.PrepareFrameAsync();
+
+        Assert.That(PixelOf(scrolled!, 90, 4), Is.Not.EqualTo(unselected));
+    }
+
+    [Test]
+    public async Task AListBoxScrollsToItsSelectedOption()
+    {
+        var select = await LoadListBoxAsync("<select size=2><option>a<option>b<option>c<option selected>d</select>");
+
+        Assert.That(select.GetScrollTop(), Is.EqualTo(2 * ListBoxRowHeight).Within(0.5));
+
+        // what is shown first now is "c"
+        await ClickListBoxRowAsync(0);
+        Assert.That(SelectedTexts(select), Is.EqualTo(new[] { "c" }));
+    }
+
+    [Test]
+    public async Task ArrowKeysMoveAndExtendAListBoxSelection()
+    {
+        var select = await LoadListBoxAsync("<select multiple size=2><option>a<option>b<option disabled>c<option>d</select>");
+        var changes = 0;
+        select.AddEventListener("change", (_, _) => changes++);
+
+        await ClickListBoxRowAsync(0);
+        changes = 0;
+        await _engine.KeyDownAsync("ArrowDown");
+        Assert.That(SelectedTexts(select), Is.EqualTo(new[] { "b" }));
+        Assert.That(changes, Is.EqualTo(1));
+
+        // past the disabled one, and scrolled to it
+        await _engine.KeyDownAsync("ArrowDown");
+        Assert.That(SelectedTexts(select), Is.EqualTo(new[] { "d" }));
+        Assert.That(select.GetScrollTop(), Is.EqualTo(2 * ListBoxRowHeight).Within(0.5));
+
+        await _engine.KeyDownAsync("ArrowUp", InputModifiers.Shift);
+        Assert.That(SelectedTexts(select), Is.EqualTo(new[] { "b", "d" }));
+    }
+
+    [Test]
+    public async Task TheWheelScrollsAListBoxBeforeThePage()
+    {
+        await _engine.LoadHtmlAsync(ListBoxStyle + "<select size=2><option>a<option>b<option>c<option>d</select><div style='height: 3000px'></div>");
+        await _engine.PrepareFrameAsync();
+        var select = (IHtmlSelectElement)_engine.Document!.QuerySelector("select")!;
+        await _engine.MovePointerAsync(10, 5);
+        await _engine.PrepareFrameAsync();
+
+        await _engine.ScrollAsync(0, ListBoxRowHeight);
+
+        Assert.That(select.GetScrollTop(), Is.EqualTo(ListBoxRowHeight).Within(1));
+        Assert.That(_engine.ScrollTop, Is.EqualTo(0));
+
+        // nothing left to scroll: the page takes it
+        await _engine.ScrollAsync(0, 500);
+        await _engine.ScrollAsync(0, 40);
+        Assert.That(_engine.ScrollTop, Is.GreaterThan(0));
+    }
+
+    [Test]
+    public async Task ASelectedListBoxRowIsPainted()
+    {
+        await LoadListBoxAsync("<select size=2><option>a<option>b</select>");
+        var before = await _engine.PrepareFrameAsync();
+        const int X = 90;
+        const int Y = 4;
+        var unselected = PixelOf(before!, X, Y);
+
+        await ClickListBoxRowAsync(0);
+        var after = await _engine.PrepareFrameAsync();
+
+        Assert.That(PixelOf(after!, X, Y), Is.Not.EqualTo(unselected));
+    }
+
+    private static (byte R, byte G, byte B) PixelOf(BrowserFrame frame, int x, int y)
+    {
+        var pixels = frame.Rasterize();
+        var offset = (((y + frame.OverscanTop) * pixels.Width) + x) * 4;
+        return (pixels.Data[offset], pixels.Data[offset + 1], pixels.Data[offset + 2]);
+    }
+
+    private const string DropdownStyle = "<style>body { margin: 0; font: 14px sans-serif } select { display: block; width: 100px; height: 20px }</style>";
+
+    private async Task<IHtmlSelectElement> LoadDropdownAsync(string markup)
+    {
+        await _engine.LoadHtmlAsync(DropdownStyle + markup);
+        await _engine.PrepareFrameAsync();
+        return (IHtmlSelectElement)_engine.Document!.QuerySelector("select")!;
+    }
+
+    private async Task PressKeyAsync(string key, InputModifiers modifiers = InputModifiers.None)
+    {
+        await _engine.KeyDownAsync(key, modifiers);
+        await _engine.KeyUpAsync(key, modifiers);
+    }
+
+    [Test]
+    public async Task ClickingADropdownOpensItAndAgainClosesIt()
+    {
+        var select = await LoadDropdownAsync("<select><option>a<option>b</select>");
+
+        await _engine.ClickAsync(10, 10);
+        Assert.That(_engine.IsSelectPopupOpen, Is.True);
+        Assert.That(_engine.Document!.ActiveElement, Is.EqualTo(select));
+
+        await _engine.ClickAsync(10, 10);
+        Assert.That(_engine.IsSelectPopupOpen, Is.False);
+    }
+
+    [Test]
+    public async Task ClickingARowOfADropdownSelectsIt()
+    {
+        var select = await LoadDropdownAsync("<select><option>a<option>b<option>c</select>");
+        var events = new List<string>();
+
+        foreach (var name in new[] { "input", "change", "click" })
+        {
+            select.AddEventListener(name, (_, _) => events.Add(name));
+        }
+
+        await _engine.ClickAsync(10, 10);
+        events.Clear();
+        // the rows follow below the select: the third one
+        await _engine.ClickAsync(10, 20 + 1 + (2.5 * PopupRowHeight));
+
+        Assert.That(_engine.IsSelectPopupOpen, Is.False);
+        Assert.That(select.Value, Is.EqualTo("c"));
+        Assert.That(events, Is.EqualTo(new[] { "input", "change", "click" }));
+    }
+
+    // of the default font of a select: 1.2em of 13.33px and the padding of the row
+    private const double PopupRowHeight = 19;
+
+    [Test]
+    public async Task DisabledRowsAndGroupsOfADropdownLeaveItOpen()
+    {
+        var select = await LoadDropdownAsync("<select><option>a<option disabled>b<optgroup label=G><option>c</optgroup></select>");
+
+        await _engine.ClickAsync(10, 10);
+        await _engine.ClickAsync(10, 20 + 1 + (1.5 * PopupRowHeight));
+        Assert.That(_engine.IsSelectPopupOpen, Is.True);
+        await _engine.ClickAsync(10, 20 + 1 + (2.5 * PopupRowHeight));
+        Assert.That(_engine.IsSelectPopupOpen, Is.True);
+        Assert.That(select.Value, Is.EqualTo("a"));
+
+        await _engine.ClickAsync(10, 20 + 1 + (3.5 * PopupRowHeight));
+        Assert.That(_engine.IsSelectPopupOpen, Is.False);
+        Assert.That(select.Value, Is.EqualTo("c"));
+    }
+
+    [Test]
+    public async Task ClickingOutsideOfADropdownClosesItAndReachesThePage()
+    {
+        await LoadDropdownAsync("<select><option>a<option>b</select><div id=out style='position: absolute; top: 200px; height: 50px; width: 100px'></div>");
+        var clicks = 0;
+        _engine.Document!.GetElementById("out")!.AddEventListener("click", (_, _) => clicks++);
+
+        await _engine.ClickAsync(10, 10);
+        await _engine.ClickAsync(10, 220);
+
+        Assert.That(_engine.IsSelectPopupOpen, Is.False);
+        Assert.That(clicks, Is.EqualTo(1));
+        Assert.That(_engine.Document!.ActiveElement, Is.Not.InstanceOf<IHtmlSelectElement>());
+    }
+
+    [Test]
+    public async Task ADisabledDropdownOrOnePreventedDoesNotOpen()
+    {
+        var select = await LoadDropdownAsync("<select disabled><option>a</select>");
+        await _engine.ClickAsync(10, 10);
+        Assert.That(_engine.IsSelectPopupOpen, Is.False);
+
+        select = await LoadDropdownAsync("<select><option>a</select>");
+        select.AddEventListener("mousedown", (_, ev) => ev.Cancel());
+        await _engine.ClickAsync(10, 10);
+        Assert.That(_engine.IsSelectPopupOpen, Is.False);
+
+        await LoadDropdownAsync("<select></select>");
+        await _engine.ClickAsync(10, 10);
+        Assert.That(_engine.IsSelectPopupOpen, Is.False);
+    }
+
+    [Test]
+    public async Task KeysMoveTheHighlightOfAnOpenDropdownUntilCommitted()
+    {
+        var select = await LoadDropdownAsync("<select><option>a0<option disabled>a1<option>a2<option selected>a3<optgroup label=G><option>g0<option disabled>g1</optgroup><optgroup label=H disabled><option>h0</optgroup><option>a4</select>");
+        var changes = 0;
+        select.AddEventListener("change", (_, _) => changes++);
+
+        await _engine.ClickAsync(10, 10);
+        await PressKeyAsync("ArrowDown");
+        await PressKeyAsync("ArrowDown");
+        Assert.That(select.Value, Is.EqualTo("a3"));
+        Assert.That(changes, Is.EqualTo(0));
+
+        // skipped what is disabled: on a4 now, then back
+        await PressKeyAsync("ArrowUp");
+        await PressKeyAsync("Enter");
+        Assert.That(_engine.IsSelectPopupOpen, Is.False);
+        Assert.That(select.Value, Is.EqualTo("g0"));
+        Assert.That(changes, Is.EqualTo(1));
+
+        // Escape takes the moved highlight back
+        await PressKeyAsync("Enter");
+        Assert.That(_engine.IsSelectPopupOpen, Is.True);
+        await PressKeyAsync("ArrowDown");
+        await PressKeyAsync("Escape");
+        Assert.That(_engine.IsSelectPopupOpen, Is.False);
+        Assert.That(select.Value, Is.EqualTo("g0"));
+
+        // Tab commits and stays
+        await PressKeyAsync(" ");
+        await PressKeyAsync("End");
+        await PressKeyAsync("Tab");
+        Assert.That(select.Value, Is.EqualTo("a4"));
+        Assert.That(_engine.Document!.ActiveElement, Is.EqualTo(select));
+
+        await PressKeyAsync("ArrowDown", InputModifiers.Alt);
+        Assert.That(_engine.IsSelectPopupOpen, Is.True);
+        await PressKeyAsync("Escape");
+    }
+
+    [Test]
+    public async Task KeysChangeAClosedDropdownRightAway()
+    {
+        var select = await LoadDropdownAsync("<select><option>a0<option disabled>a1<option>a2<option selected>a3<optgroup label=G><option>g0<option disabled>g1</optgroup><optgroup label=H disabled><option>h0</optgroup><option>a4</select>");
+        var changes = 0;
+        select.AddEventListener("change", (_, _) => changes++);
+        await _engine.ClickAsync(10, 10);
+        await PressKeyAsync("Escape");
+
+        await PressKeyAsync("ArrowDown");
+        Assert.That(select.Value, Is.EqualTo("g0"));
+        await PressKeyAsync("ArrowDown");
+        Assert.That(select.Value, Is.EqualTo("a4"));
+        await PressKeyAsync("ArrowUp");
+        Assert.That(select.Value, Is.EqualTo("g0"));
+        await PressKeyAsync("End");
+        Assert.That(select.Value, Is.EqualTo("a4"));
+        await PressKeyAsync("Home");
+        Assert.That(select.Value, Is.EqualTo("a0"));
+        await PressKeyAsync("PageDown");
+        Assert.That(select.Value, Is.EqualTo("a3"));
+        Assert.That(changes, Is.EqualTo(6));
+
+        // nowhere to go, nothing to tell
+        changes = 0;
+        await PressKeyAsync("End");
+        await PressKeyAsync("ArrowDown");
+        Assert.That(changes, Is.EqualTo(1));
+    }
+
+    [Test]
+    public async Task TypingFindsTheOptionsOfADropdown()
+    {
+        var select = await LoadDropdownAsync("<select><option>apple<option>avocado<option disabled>banana<option>cherry<option>apricot</select>");
+        await _engine.ClickAsync(10, 10);
+        await PressKeyAsync("Escape");
+
+        // goes through the ones starting with a repeated letter
+        await PressKeyAsync("a");
+        Assert.That(select.Value, Is.EqualTo("avocado"));
+        await PressKeyAsync("a");
+        Assert.That(select.Value, Is.EqualTo("apricot"));
+        await Task.Delay(1100);
+
+        // further letters narrow it down; nothing matching changes nothing
+        await PressKeyAsync("c");
+        Assert.That(select.Value, Is.EqualTo("cherry"));
+        await PressKeyAsync("h");
+        Assert.That(select.Value, Is.EqualTo("cherry"));
+        await PressKeyAsync("x");
+        Assert.That(select.Value, Is.EqualTo("cherry"));
+        await Task.Delay(1100);
+
+        // a disabled one isn't found
+        await PressKeyAsync("b");
+        Assert.That(select.Value, Is.EqualTo("cherry"));
+    }
+
+    [Test]
+    public async Task TheKeysOfAnOpenDropdownAreNotForThePage()
+    {
+        var select = await LoadDropdownAsync("<select><option>a<option>b</select>");
+        var keys = new List<string>();
+        select.AddEventListener("keydown", (_, _) => keys.Add("keydown"));
+
+        await _engine.ClickAsync(10, 10);
+        await _engine.KeyDownAsync("ArrowDown");
+
+        Assert.That(keys, Is.Empty);
+    }
+
+    [Test]
+    public async Task HoveringADropdownRowHighlightsIt()
+    {
+        var select = await LoadDropdownAsync("<select><option>a<option>b<option>c</select>");
+        await _engine.ClickAsync(10, 10);
+        await _engine.PrepareFrameAsync();
+
+        await _engine.MovePointerAsync(10, 20 + 1 + (2.5 * PopupRowHeight));
+        await PressKeyAsync("Enter");
+
+        Assert.That(select.Value, Is.EqualTo("c"));
+    }
+
+    [Test]
+    public async Task AnOpenDropdownIsPaintedOnTopOfThePage()
+    {
+        await LoadDropdownAsync("<select><option>a<option>b</select><div style='height: 100px; background: rgb(255, 0, 0)'></div>");
+        const int X = 95;
+        const int Y = 30;
+        var closed = PixelOf((await _engine.PrepareFrameAsync())!, X, Y);
+        Assert.That(closed, Is.EqualTo(((byte)255, (byte)0, (byte)0)));
+
+        await _engine.ClickAsync(10, 10);
+        var open = PixelOf((await _engine.PrepareFrameAsync())!, X, Y);
+        Assert.That(open, Is.Not.EqualTo(closed));
+
+        await PressKeyAsync("Escape");
+        Assert.That(PixelOf((await _engine.PrepareFrameAsync())!, X, Y), Is.EqualTo(closed));
+    }
+
+    [TestCase("", null, 255)]
+    [TestCase("", "dark", 255)]
+    [TestCase("<style>:root { color-scheme: dark }</style>", "light", 59)]
+    [TestCase("<style>:root { color-scheme: light dark }</style>", "dark", 59)]
+    [TestCase("<style>:root { color-scheme: light dark }</style>", "light", 255)]
+    [TestCase("<style>:root { color-scheme: only dark }</style>", "light", 59)]
+    [TestCase("<style>:root { color-scheme: dark } select { color-scheme: only light }</style>", "dark", 255)]
+    public async Task AnOpenDropdownUsesTheColorSchemeOfThePage(string head, string? preference, int expected)
+    {
+        _engine.ColorScheme = preference;
+        await LoadDropdownAsync(head + "<select><option>a<option>b</select>");
+
+        await _engine.ClickAsync(10, 10);
+        // the end of the first row, which isn't the highlighted one
+        var frame = await _engine.PrepareFrameAsync();
+        await PressKeyAsync("ArrowDown");
+        frame = await _engine.PrepareFrameAsync();
+
+        Assert.That((int)PixelOf(frame!, 90, 20 + 1 + 5).R, Is.EqualTo(expected));
+        _engine.ColorScheme = null;
+    }
+
+    [Test]
+    public async Task ControlsDoNotTakeTheTextColorOfThePage()
+    {
+        var select = await LoadDropdownAsync("<style>body { color: rgb(200, 0, 0) }</style><select><option>a</select>");
+
+        Assert.That(select.ComputeCurrentStyle().GetPropertyValue("color"), Is.EqualTo("rgba(0, 0, 0, 1)"));
+    }
+
+    [Test]
+    public async Task ClicksHitAnAbsoluteBoxWhereItIsPlacedAgainstTheViewport()
+    {
+        await _engine.LoadHtmlAsync("<body style='margin: 20px'><div style='margin: 50px'><button id=b style='position: absolute; left: 5px; top: 5px; width: 40px; height: 20px'>x</button></div></body>");
+        await _engine.PrepareFrameAsync();
+        var clicks = 0;
+        _engine.Document!.GetElementById("b")!.AddEventListener("click", (_, _) => clicks++);
+
+        await _engine.ClickAsync(10, 10);
+
+        Assert.That(clicks, Is.EqualTo(1));
+    }
+
+    [Test]
+    public async Task ClicksReachWhatEscapesAClipAndWhatIsInLaterColumns()
+    {
+        await _engine.LoadHtmlAsync("""
+            <body style='margin: 0'>
+              <div style='overflow: hidden; width: 50px; height: 20px'><button id=escaped style='position: absolute; left: 200px; top: 0; width: 40px; height: 20px'>x</button></div>
+              <div style='columns: 2; column-gap: 20px; width: 400px; margin-top: 50px'>
+                <div style='height: 40px; break-inside: avoid'></div>
+                <button id=column style='display: block; width: 100px; height: 40px; break-inside: avoid'>y</button>
+              </div>
+            </body>
+            """);
+        await _engine.PrepareFrameAsync();
+        var clicks = new List<string>();
+        _engine.Document!.GetElementById("escaped")!.AddEventListener("click", (_, _) => clicks.Add("escaped"));
+        _engine.Document!.GetElementById("column")!.AddEventListener("click", (_, _) => clicks.Add("column"));
+
+        await _engine.ClickAsync(210, 10);
+        var column = _engine.Document!.GetElementById("column")!.GetBoundingClientRect();
+        Assert.That(column.Left, Is.EqualTo(210));
+        await _engine.ClickAsync(column.Left + 10, column.Top + 10);
+
+        Assert.That(clicks, Is.EqualTo(new[] { "escaped", "column" }));
+    }
+
+    [Test]
+    public async Task ClientRectsCanBeIndexedByScripts()
+    {
+        await _engine.LoadHtmlAsync("<div id=box style='width: 30px; height: 10px'></div>");
+
+        var width = await _engine.EvaluateScriptAsync("document.getElementById('box').getClientRects()[0].width");
+
+        Assert.That(Convert.ToDouble(width), Is.EqualTo(30));
+    }
+
+    [Test]
+    public async Task OpeningADropdownAsksForAFrame()
+    {
+        await LoadDropdownAsync("<select><option>a<option>b</select>");
+        await _engine.PrepareFrameAsync();
+        var invalidated = 0;
+        _engine.Invalidated += (_, _) => invalidated++;
+
+        await _engine.ClickAsync(10, 10);
+
+        Assert.That(invalidated, Is.GreaterThan(0));
+        Assert.That((await _engine.PrepareFrameAsync())!.Width, Is.GreaterThan(0));
+    }
+
+    [Test]
+    public async Task ThePopupOfADropdownOpensAboveWithoutRoomBelow()
+    {
+        await _engine.LoadHtmlAsync(DropdownStyle + "<div style='height: 760px'></div><select><option>a<option>b<option>c<option>d</select>");
+        await _engine.PrepareFrameAsync();
+        var select = (IHtmlSelectElement)_engine.Document!.QuerySelector("select")!;
+        var top = select.GetBoundingClientRect().Top;
+
+        await _engine.ClickAsync(10, top + 5);
+        // the first row is above the select now
+        await _engine.ClickAsync(10, top - (3.5 * PopupRowHeight) - 1);
+
+        Assert.That(select.Value, Is.EqualTo("a"));
+    }
+
+    [Test]
+    public async Task ScrollingThePageClosesADropdownButTheWheelOnItsListDoesNot()
+    {
+        var options = string.Concat(Enumerable.Range(0, 40).Select(i => $"<option>o{i}"));
+        var select = await LoadDropdownAsync($"<select>{options}</select><div style='height: 3000px'></div>");
+
+        await _engine.ClickAsync(10, 10);
+        await _engine.MovePointerAsync(10, 100);
+        await _engine.ScrollAsync(0, 3 * PopupRowHeight);
+        Assert.That(_engine.IsSelectPopupOpen, Is.True);
+        Assert.That(_engine.ScrollTop, Is.EqualTo(0));
+
+        // the rows moved up by three
+        await _engine.ClickAsync(10, 20 + 1 + (0.5 * PopupRowHeight));
+        Assert.That(select.Value, Is.EqualTo("o3"));
+
+        await _engine.ClickAsync(10, 10);
+        await _engine.MovePointerAsync(300, 700);
+        await _engine.ScrollAsync(0, 40);
+        Assert.That(_engine.IsSelectPopupOpen, Is.False);
+    }
+
+    [Test]
+    public async Task ADropdownClosesWhenItGoesAwayLosesFocusOrTheViewportChanges()
+    {
+        var select = await LoadDropdownAsync("<select><option>a<option>b</select>");
+
+        await _engine.ClickAsync(10, 10);
+        await _engine.InvokeAsync(_ => select.Remove());
+        await _engine.PrepareFrameAsync();
+        Assert.That(_engine.IsSelectPopupOpen, Is.False);
+
+        select = await LoadDropdownAsync("<select><option>a<option>b</select><input id=other>");
+        await _engine.ClickAsync(10, 10);
+        await _engine.InvokeAsync(document => ((IHtmlElement)document!.GetElementById("other")!).DoFocus());
+        await _engine.PrepareFrameAsync();
+        Assert.That(_engine.IsSelectPopupOpen, Is.False);
+
+        await LoadDropdownAsync("<select><option>a<option>b</select>");
+        await _engine.ClickAsync(10, 10);
+        _engine.Resize(500, 500);
+        await _engine.PrepareFrameAsync();
+        Assert.That(_engine.IsSelectPopupOpen, Is.False);
+
+        await LoadDropdownAsync("<select><option>a<option>b</select>");
+        await _engine.ClickAsync(10, 10);
+        await LoadDropdownAsync("<select><option>c</select>");
+        await _engine.PrepareFrameAsync();
+        Assert.That(_engine.IsSelectPopupOpen, Is.False);
     }
 
     [Test]
@@ -692,7 +1764,7 @@ public class BrowserEngineTests
 
         await _engine.ScrollToAsync(500, animate: false);
         var frame = await _engine.PrepareFrameAsync();
-        _engine.MovePointer(10, 20);
+        _engine.MovePointer(10, 10);
 
         Assert.That(frame!.ScrollTop, Is.EqualTo(500));
         Assert.That(frame.IsScrollShiftable, Is.False);
