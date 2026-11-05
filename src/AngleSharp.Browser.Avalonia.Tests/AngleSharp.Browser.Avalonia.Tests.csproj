@@ -16,5 +16,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\AngleSharp.Browser.Avalonia\AngleSharp.Browser.Avalonia.csproj" />
+    <ProjectReference Include="..\Vision\Vision.csproj" />
   </ItemGroup>
 </Project>

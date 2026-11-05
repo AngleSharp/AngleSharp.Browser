@@ -90,8 +90,16 @@ foreach (var request in engine.Diagnostics.Requests)
 
 foreach (var message in engine.Diagnostics.Messages)
 {
-    Console.WriteLine($"[{message.Kind}] {message.Text}");
+    Console.WriteLine($"[{message.Kind}] {message.ErrorType} {message.Text}");
+    Console.WriteLine(message.StackTrace);
+}
+
+foreach (var frame in engine.Diagnostics.Frames)
+{
+    Console.WriteLine($"{frame.Kind}: layout {frame.Layout}, raster {frame.Raster}");
 }
 ```
+
+Requests come with their `StartedAt` and `Duration` as well as their `RequestHeaders` and `ResponseHeaders`. Errors tell as much as is known about them: `ErrorType`, `Line`, `Column` and the `StackTrace` of the script (or of the .NET exception, if no script threw). `Source` names the script, if known; AngleSharp.Js does not report that yet. `Frames` has the timings of the latest painted frames (those made by `PrepareFrameAsync` and rasterized), where `Kind` tells if the document was laid out (`Layout`), the last frame was patched (`Update`) or just moved (`Reposition`).
 
 The `Changed` event tells when there is something new. `Clear()` removes what has been collected so far.

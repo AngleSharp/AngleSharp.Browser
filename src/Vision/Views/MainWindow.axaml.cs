@@ -7,11 +7,14 @@ namespace Vision.Views;
 
 public partial class MainWindow : Window
 {
-    private const double DefaultDiagnosticsWidth = 200;
-    private const double MinDiagnosticsWidth = 160;
+    private const double DefaultPanelWidth = 200;
+    private const double MinPanelWidth = 160;
+    private const double MaxPanelShare = 0.8;
 
     private MainViewModel? _viewModel;
-    private double _diagnosticsWidth = DefaultDiagnosticsWidth;
+    // what the user made of the panel's width, which is kept for the next time
+    private double? _panelWidth;
+    private double _openedWidth;
 
     public MainWindow()
     {
@@ -37,19 +40,26 @@ public partial class MainWindow : Window
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(MainViewModel.IsDiagnosticsOpen))
+        if (e.PropertyName == nameof(MainViewModel.IsPanelOpen))
         {
             var column = ContentGrid.ColumnDefinitions[2];
 
-            if (_viewModel!.IsDiagnosticsOpen)
+            if (_viewModel!.IsPanelOpen)
             {
-                // the splitter resizes the column; the width is remembered for the next time
-                column.MinWidth = MinDiagnosticsWidth;
-                column.Width = new GridLength(_diagnosticsWidth);
+                // the splitter resizes the column
+                var available = ContentGrid.Bounds.Width;
+                var width = _panelWidth ?? Math.Max(DefaultPanelWidth, available / 3);
+                _openedWidth = available > 0 ? Math.Min(width, Math.Max(MinPanelWidth, available * MaxPanelShare)) : width;
+                column.MinWidth = MinPanelWidth;
+                column.Width = new GridLength(_openedWidth);
             }
             else
             {
-                _diagnosticsWidth = column.ActualWidth > 0 ? column.ActualWidth : _diagnosticsWidth;
+                if (column.ActualWidth > 0 && Math.Abs(column.ActualWidth - _openedWidth) > 0.5)
+                {
+                    _panelWidth = column.ActualWidth;
+                }
+
                 column.MinWidth = 0;
                 column.Width = new GridLength(0);
             }

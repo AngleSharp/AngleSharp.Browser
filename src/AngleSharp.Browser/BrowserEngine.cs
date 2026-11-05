@@ -80,6 +80,7 @@ public sealed partial class BrowserEngine : IDisposable
     private int _loadCount;
     private int _layoutVersion;
     private int _scrollExtentVersion = -1;
+    private Exception? _lastError;
     private double _maxScrollTop;
     private bool _wasReadyForLayout;
     private volatile bool _isPainting;
@@ -193,6 +194,18 @@ public sealed partial class BrowserEngine : IDisposable
                     if (ev is AngleSharp.Html.Dom.Events.HtmlParseEvent { Document: { } document })
                     {
                         scripting.EvaluateScript(document, TimerClampScript, "text/javascript", "about:blank");
+                        // AngleSharp.Js reports an event listener throwing on the window alone, with an
+                        // ErrorEvent that only has the type "error" from AngleSharp 1.10 or
+                        // AngleSharp.Js 1.2 (the listener of no type goes away once they are referenced)
+                        DomEventHandler onError = (_, error) =>
+                        {
+                            if (error is ErrorEvent { Error: { } exception })
+                            {
+                                OnError(exception);
+                            }
+                        };
+                        document.DefaultView?.AddEventListener("error", onError);
+                        document.DefaultView?.AddEventListener(null!, onError);
                     }
                 };
             }
@@ -601,6 +614,7 @@ public sealed partial class BrowserEngine : IDisposable
         {
             await RunExclusiveAsync(() =>
             {
+                NavigationHistory.SetDocumentUrl(entry);
                 _document?.DefaultView?.Dispatch(new PopStateEvent(entry.State));
                 OnStateChanged();
             }, cancellationToken).ConfigureAwait(false);
@@ -826,7 +840,13 @@ public sealed partial class BrowserEngine : IDisposable
 
     private void OnError(Exception ex)
     {
-        _diagnostics.OnMessage(DiagnosticKind.Error, ex.Message);
+        // AngleSharp.Js 1.2 tells the window as well as the context of the same error
+        if (ReferenceEquals(Interlocked.Exchange(ref _lastError, ex), ex))
+        {
+            return;
+        }
+
+        _diagnostics.OnError(ex);
         Error?.Invoke(this, ex);
     }
 

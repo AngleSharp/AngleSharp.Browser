@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using AngleSharp.Browser.Dom;
 using AngleSharp.Dom;
+using System.Reflection;
 
 /// <summary>
 /// The session history of the engine's top-level browsing context, which scripts reach as
@@ -155,6 +156,7 @@ sealed class NavigationHistory : IHistory
 
             var current = _entries[_index];
             Add(new Entry(ResolveUrl(current, url), current.Document, data));
+            SetDocumentUrl(_entries[_index]);
         }
 
         Changed?.Invoke();
@@ -171,9 +173,35 @@ sealed class NavigationHistory : IHistory
 
             var current = _entries[_index];
             _entries[_index] = current with { Url = ResolveUrl(current, url), State = data };
+            SetDocumentUrl(_entries[_index]);
         }
 
         Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Gives the document the address of its entry without navigating (HTML 7.4.4), as its
+    /// location, document.URL and relative links have to follow pushState. Core has that only
+    /// as a protected setter so far.
+    /// </summary>
+    public static void SetDocumentUrl(Entry entry)
+    {
+        if (entry.Document is null || entry.Document.Url == entry.Url)
+        {
+            return;
+        }
+
+        for (var type = entry.Document.GetType(); type is not null; type = type.BaseType)
+        {
+            var property = type.GetProperty(nameof(IDocument.DocumentUri), BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly);
+            var setter = property?.GetSetMethod(true);
+
+            if (setter is not null)
+            {
+                setter.Invoke(entry.Document, new object[] { entry.Url });
+                return;
+            }
+        }
     }
 
     private void Add(Entry entry)

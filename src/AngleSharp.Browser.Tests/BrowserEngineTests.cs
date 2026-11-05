@@ -1491,6 +1491,145 @@ public class BrowserEngineTests
     }
 
     [Test]
+    public async Task DiagnosticsReportTheDetailsOfScriptErrors()
+    {
+        await _engine.LoadHtmlAsync("""
+            <script>
+            function inner() {
+              throw new TypeError('broken');
+            }
+            function outer() {
+              inner();
+            }
+            outer();
+            </script>
+            """);
+
+        var error = _engine.Diagnostics.Messages.Single();
+        Assert.That(error.Text, Does.Contain("broken"));
+        Assert.That(error.ErrorType, Is.EqualTo("TypeError"));
+        Assert.That(error.Line, Is.EqualTo(3));
+        Assert.That(error.StackTrace, Does.Contain("inner").And.Contain("outer"));
+    }
+
+    [Test]
+    public async Task DiagnosticsCollectErrorsOfEventListeners()
+    {
+        await _engine.LoadHtmlAsync("""
+            <button id=b>Go</button>
+            <script>
+            document.getElementById('b').addEventListener('click', function onClick() { throw new RangeError('from listener'); });
+            </script>
+            """);
+
+        await _engine.EvaluateScriptAsync("document.getElementById('b').click()");
+        await Eventually(() => _engine.Diagnostics.Messages.Any(m => m.Kind == DiagnosticKind.Error));
+
+        var error = _engine.Diagnostics.Messages.Single(m => m.Kind == DiagnosticKind.Error);
+        Assert.That(error.ErrorType, Is.EqualTo("RangeError"));
+        Assert.That(error.StackTrace, Does.Contain("onClick"));
+    }
+
+    [Test]
+    public async Task DiagnosticsCollectErrorsOfTimers()
+    {
+        await _engine.LoadHtmlAsync("<script>setTimeout(function later() { throw new Error('from timer'); }, 0)</script>");
+
+        await Eventually(() => _engine.Diagnostics.Messages.Any(m => m.Kind == DiagnosticKind.Error));
+
+        var error = _engine.Diagnostics.Messages.Single(m => m.Kind == DiagnosticKind.Error);
+        Assert.That(error.ErrorType, Is.EqualTo("Error"));
+        Assert.That(error.StackTrace, Does.Contain(":1:"));
+    }
+
+    [Test]
+    public async Task DiagnosticsCollectTheHeadersOfRequests()
+    {
+        using var server = new TestServer(new()
+        {
+            ["/"] = ("text/html", "<p>Hello</p>"u8.ToArray()),
+        });
+
+        await _engine.NavigateAsync(server.Address);
+        await Eventually(() => _engine.Diagnostics.Requests.Any(m => !m.IsPending));
+
+        var request = _engine.Diagnostics.Requests.Single();
+        Assert.That(request.RequestHeaders.Keys, Does.Contain("User-Agent"));
+        Assert.That(request.ResponseHeaders["Content-Type"], Does.StartWith("text/html"));
+    }
+
+    [Test]
+    public async Task DiagnosticsCollectTheTimingsOfFrames()
+    {
+        await _engine.LoadHtmlAsync("<p>Hello</p>");
+
+        var frame = await _engine.PrepareFrameAsync();
+        Assert.That(_engine.Diagnostics.Frames, Is.Empty);
+
+        frame!.Rasterize();
+
+        var timing = _engine.Diagnostics.Frames.Single();
+        Assert.That(timing.Kind, Is.EqualTo(FrameKind.Layout));
+        Assert.That(timing.Layout, Is.GreaterThan(TimeSpan.Zero));
+        Assert.That(timing.Raster, Is.GreaterThan(TimeSpan.Zero));
+
+        _engine.Diagnostics.Clear();
+        Assert.That(_engine.Diagnostics.Frames, Is.Empty);
+    }
+
+    [TestCase("html")]
+    [TestCase("body")]
+    public async Task APageWithHiddenOverflowOnItsRootIsNotScrolledByTheUser(string element)
+    {
+        await _engine.LoadHtmlAsync($$"""
+            <style>{{element}} { overflow: hidden } body { margin: 0 }</style>
+            <div style="height: 5000px">Tall</div>
+            """);
+        await _engine.MovePointerAsync(100, 100);
+        await _engine.PrepareFrameAsync();
+
+        await _engine.ScrollAsync(0, 300);
+
+        Assert.That(_engine.ScrollPosition, Is.EqualTo(0));
+    }
+
+    [Test]
+    public async Task ScrollContainersOfALockedPageStillScroll()
+    {
+        await _engine.LoadHtmlAsync("""
+            <style>html, body { height: 100%; margin: 0; overflow: hidden } #box { height: 100%; overflow: auto }</style>
+            <div id=box><div style="height: 5000px">Tall</div></div>
+            """);
+        await _engine.PrepareFrameAsync();
+        await _engine.MovePointerAsync(100, 100);
+
+        await _engine.ScrollAsync(0, 300);
+
+        var top = await _engine.InvokeAsync(d => d!.GetElementById("box")!.GetScrollTop());
+        Assert.That(top, Is.EqualTo(300));
+        Assert.That(_engine.ScrollPosition, Is.EqualTo(0));
+    }
+
+    [Test]
+    public async Task APageLockedWhileScrolledStaysWhereItIs()
+    {
+        await _engine.LoadHtmlAsync("""
+            <style>body { margin: 0 } .locked { overflow: hidden }</style>
+            <div style="height: 5000px">Tall</div>
+            """);
+        await _engine.MovePointerAsync(100, 100);
+        await _engine.PrepareFrameAsync();
+        await _engine.ScrollAsync(0, 300);
+        Assert.That(_engine.ScrollPosition, Is.EqualTo(300));
+
+        await _engine.EvaluateScriptAsync("document.body.className = 'locked'");
+        await _engine.PrepareFrameAsync();
+        await _engine.ScrollAsync(0, 300);
+
+        Assert.That(_engine.ScrollPosition, Is.EqualTo(300));
+    }
+
+    [Test]
     public async Task InvokeAsyncWiresUpDotNetEventHandlers()
     {
         using var engine = new BrowserEngine(new BrowserOptions { ViewportWidth = 800, ViewportHeight = 600, IsScriptingEnabled = false });

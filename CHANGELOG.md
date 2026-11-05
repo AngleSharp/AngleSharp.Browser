@@ -6,3 +6,6 @@ Released on Monday, November 2 2026.
 - Added `AngleSharp.Browser.Avalonia`, the `BrowserView` control displaying web pages in Avalonia applications
 - Added iframes, with their documents isolated by origin and sandbox, and input routed into them
 - Added `Vision`, a sample browser built on top of the control
+- Added details of errors (type, location and stack trace), request headers and frame timings to `BrowserDiagnostics`
+- Added a waterfall of the requests, the rendering timings and the stack traces of errors to the diagnostics of `Vision`
+- Added an inspector to `Vision`, showing the DOM, the CSSOM and the render tree of a page

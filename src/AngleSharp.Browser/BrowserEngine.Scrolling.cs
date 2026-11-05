@@ -60,8 +60,9 @@ partial class BrowserEngine
 
     /// <summary>
     /// Gets the height of the page's content as of the last layout, at least the viewport's.
+    /// A page that cannot be scrolled (overflow: hidden on its root) is as high as the viewport.
     /// </summary>
-    public double ScrollHeight => Volatile.Read(ref _maxScrollTop) + ViewportHeight;
+    public double ScrollHeight => _isPageScrollLocked ? ViewportHeight : Volatile.Read(ref _maxScrollTop) + ViewportHeight;
 
     /// <summary>
     /// Scrolls the page to the given vertical position.

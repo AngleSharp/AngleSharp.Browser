@@ -15,7 +15,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     private const string ApplicationName = "Vision";
 
     private readonly IBrowserHost _host;
-    private DiagnosticsPage? _diagnostics;
+    private HtmlPage? _panel;
     private string? _lastUrl;
     private int _isErrorCheckPending;
 
@@ -56,24 +56,46 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     /// Gets if the page reported errors, which the diagnostics show.
     /// </summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(NeedsAttention))]
     public partial bool HasErrors { get; set; }
 
+    /// <summary>
+    /// Gets if the side panel shows the diagnostics.
+    /// </summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(NeedsAttention))]
     public partial bool IsDiagnosticsOpen { get; set; }
 
     /// <summary>
-    /// Gets the engine showing the diagnostics of the page, while they are open.
+    /// Gets if the side panel shows the inspector.
     /// </summary>
     [ObservableProperty]
-    public partial BrowserEngine? DiagnosticsEngine { get; set; }
+    public partial bool IsInspectorOpen { get; set; }
+
+    /// <summary>
+    /// Gets if the side panel is open.
+    /// </summary>
+    [ObservableProperty]
+    public partial bool IsPanelOpen { get; set; }
+
+    /// <summary>
+    /// Gets the engine showing the side panel, while it is open.
+    /// </summary>
+    [ObservableProperty]
+    public partial BrowserEngine? PanelEngine { get; set; }
 
     public bool HasStatus => Status.Length > 0;
+
+    /// <summary>
+    /// Gets if there are errors the diagnostics would show, but are not showing right now.
+    /// </summary>
+    public bool NeedsAttention => HasErrors && !IsDiagnosticsOpen;
 
     public void Dispose()
     {
         Engine.Diagnostics.Changed -= OnDiagnosticsChanged;
         _host.ColorSchemeChanged -= OnColorSchemeChanged;
-        CloseDiagnostics();
+        ClosePanel();
     }
 
     [RelayCommand]
@@ -102,28 +124,42 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     private void OpenAbout() => _host.OpenAbout(Engine);
 
     [RelayCommand]
-    private async Task ToggleDiagnosticsAsync()
-    {
-        if (_diagnostics is not null)
-        {
-            CloseDiagnostics();
-            return;
-        }
+    private Task ToggleDiagnosticsAsync() => TogglePanelAsync<DiagnosticsPage>(() => new DiagnosticsPage(_host.ColorScheme, Engine));
 
-        var page = new DiagnosticsPage(_host.ColorScheme, Engine);
-        _diagnostics = page;
-        DiagnosticsEngine = page.Engine;
-        IsDiagnosticsOpen = true;
-        await page.LoadAsync();
+    [RelayCommand]
+    private Task ToggleInspectorAsync() => TogglePanelAsync<InspectorPage>(() => new InspectorPage(_host.ColorScheme, Engine));
+
+    /// <summary>
+    /// The side panel shows one page: the given one is closed if it is shown, else it replaces
+    /// whatever else is shown.
+    /// </summary>
+    private async Task TogglePanelAsync<T>(Func<T> create)
+        where T : HtmlPage
+    {
+        var wasOpen = _panel is T;
+        ClosePanel();
+
+        if (!wasOpen)
+        {
+            var page = create();
+            _panel = page;
+            PanelEngine = page.Engine;
+            IsDiagnosticsOpen = page is DiagnosticsPage;
+            IsInspectorOpen = page is InspectorPage;
+            IsPanelOpen = true;
+            await page.LoadAsync();
+        }
     }
 
-    private void CloseDiagnostics()
+    private void ClosePanel()
     {
-        if (_diagnostics is { } page)
+        if (_panel is { } page)
         {
-            _diagnostics = null;
+            _panel = null;
+            IsPanelOpen = false;
             IsDiagnosticsOpen = false;
-            DiagnosticsEngine = null;
+            IsInspectorOpen = false;
+            PanelEngine = null;
             page.Dispose();
         }
     }
@@ -136,9 +172,9 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     {
         Engine.ColorScheme = _host.ColorScheme;
 
-        if (DiagnosticsEngine is { } diagnostics)
+        if (PanelEngine is { } panel)
         {
-            diagnostics.ColorScheme = _host.ColorScheme;
+            panel.ColorScheme = _host.ColorScheme;
         }
     }
 

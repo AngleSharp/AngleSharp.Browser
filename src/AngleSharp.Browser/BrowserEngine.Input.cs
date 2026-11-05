@@ -168,6 +168,8 @@ partial class BrowserEngine
             {
                 KeepAnimating(InteractionDuration);
 
+                Fire(target, CreateMouseEvent(target, "pointerdown", x, y, modifiers));
+
                 if (Fire(target, CreateMouseEvent(target, "mousedown", x, y, modifiers)))
                 {
                     UpdateFocus(target);
@@ -235,6 +237,7 @@ partial class BrowserEngine
             }
 
             KeepAnimating(InteractionDuration);
+            Fire(target, CreateMouseEvent(target, "pointerup", x, y, modifiers));
             Fire(target, CreateMouseEvent(target, "mouseup", x, y, modifiers));
 
             if (changedListBox is not null)
@@ -301,7 +304,11 @@ partial class BrowserEngine
 
         if (_hasPointer && FindPointerTarget(_lastPointer.X, _lastPointer.Y) is { IsInScrollContainer: false })
         {
-            await RequestScroll(top => top + deltaY, animate: true).ConfigureAwait(false);
+            if (!_isPageScrollLocked)
+            {
+                await RequestScroll(top => top + deltaY, animate: true).ConfigureAwait(false);
+            }
+
             return;
         }
 
@@ -439,11 +446,13 @@ partial class BrowserEngine
         {
             if (previous is not null && IsInPage(previous.Owner))
             {
+                Fire(previous, CreateMouseEvent(previous, "pointerout", x, y, InputModifiers.None));
                 Fire(previous, CreateMouseEvent(previous, "mouseout", x, y, InputModifiers.None));
             }
 
             if (element is not null)
             {
+                Fire(element, CreateMouseEvent(element, "pointerover", x, y, InputModifiers.None));
                 Fire(element, CreateMouseEvent(element, "mouseover", x, y, InputModifiers.None));
             }
 
@@ -453,6 +462,7 @@ partial class BrowserEngine
 
         if (element is not null && isMove)
         {
+            Fire(element, CreateMouseEvent(element, "pointermove", x, y, InputModifiers.None));
             Fire(element, CreateMouseEvent(element, "mousemove", x, y, InputModifiers.None));
         }
 
@@ -968,7 +978,7 @@ partial class BrowserEngine
     /// <returns>The task completing once the page arrived.</returns>
     private Task ScrollPage(double delta)
     {
-        if (_document?.DocumentElement is IElement root && IsReadyForLayout())
+        if (!_isPageScrollLocked && _document?.DocumentElement is IElement root && IsReadyForLayout())
         {
             GetMaxScrollTop(root);
             AdoptScrollPosition(ScrollTop);

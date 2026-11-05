@@ -6,6 +6,8 @@ using System.Linq;
 using System.Net;
 using AngleSharp.Io;
 using AngleSharp.Js;
+using Jint.Native.Object;
+using Jint.Runtime;
 
 /// <summary>
 /// A request made for the current page, with its response once it arrived.
@@ -30,6 +32,16 @@ public sealed record NetworkEntry(
     /// Gets if the response has not arrived (yet).
     /// </summary>
     public bool IsPending => StatusCode is null;
+
+    /// <summary>
+    /// Gets the headers that were sent.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> RequestHeaders { get; init; } = new Dictionary<string, string>();
+
+    /// <summary>
+    /// Gets the headers of the response, which are empty while pending.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> ResponseHeaders { get; init; } = new Dictionary<string, string>();
 }
 
 /// <summary>
@@ -50,21 +62,79 @@ public enum DiagnosticKind
 /// <summary>
 /// A message reported while showing the current page.
 /// </summary>
-public sealed record DiagnosticMessage(DiagnosticKind Kind, DateTimeOffset Time, string Text);
+public sealed record DiagnosticMessage(DiagnosticKind Kind, DateTimeOffset Time, string Text)
+{
+    /// <summary>
+    /// Gets the type of an error: the name of a script's error (e.g., TypeError), else the
+    /// name of the .NET exception. Null for console output.
+    /// </summary>
+    public string? ErrorType { get; init; }
+
+    /// <summary>
+    /// Gets the script an error comes from, if known.
+    /// </summary>
+    public string? Source { get; init; }
+
+    /// <summary>
+    /// Gets the line (starting at 1) in the script an error comes from, if known.
+    /// </summary>
+    public int? Line { get; init; }
+
+    /// <summary>
+    /// Gets the column in the script an error comes from, if known.
+    /// </summary>
+    public int? Column { get; init; }
+
+    /// <summary>
+    /// Gets the call stack of an error: the one of the script if it comes from a script, else
+    /// the one of the .NET exception.
+    /// </summary>
+    public string? StackTrace { get; init; }
+}
 
 /// <summary>
-/// Collects what happens while showing the current page: requests, errors and console output,
-/// like the developer tools of a browser. Starts over with every page. Thread-safe; the
+/// What it took to bring a frame up to date.
+/// </summary>
+public enum FrameKind
+{
+    /// <summary>
+    /// The document was laid out.
+    /// </summary>
+    Layout,
+    /// <summary>
+    /// The last frame was patched, as the changes were confined to a few boxes.
+    /// </summary>
+    Update,
+    /// <summary>
+    /// The last frame was moved to another scroll position.
+    /// </summary>
+    Reposition,
+}
+
+/// <summary>
+/// The timings of a painted frame.
+/// </summary>
+/// <param name="Time">When the engine started with the frame.</param>
+/// <param name="Kind">What it took to bring the frame up to date.</param>
+/// <param name="Layout">The time spent on the engine's thread, mostly in the layout.</param>
+/// <param name="Raster">The time spent rasterizing the frame to pixels.</param>
+public sealed record FrameTiming(DateTimeOffset Time, FrameKind Kind, TimeSpan Layout, TimeSpan Raster);
+
+/// <summary>
+/// Collects what happens while showing the current page: requests, errors, console output and
+/// the timings of the frames, like the developer tools of a browser. Starts over with every page. Thread-safe; the
 /// <see cref="Changed"/> event may be raised from any thread.
 /// </summary>
 public sealed class BrowserDiagnostics
 {
     private const int MaxEntries = 1000;
+    private const int MaxFrames = 600;
 
     private readonly object _lock = new();
     private readonly List<NetworkEntry> _requests = [];
     private readonly Dictionary<Request, NetworkEntry> _pending = new(ReferenceEqualityComparer.Instance);
     private readonly List<DiagnosticMessage> _messages = [];
+    private readonly List<FrameTiming> _frames = [];
     private DateTimeOffset _navigationStart = DateTimeOffset.MinValue;
 
     internal BrowserDiagnostics()
@@ -105,6 +175,20 @@ public sealed class BrowserDiagnostics
     }
 
     /// <summary>
+    /// Gets the timings of the latest painted frames of the current page, oldest first.
+    /// </summary>
+    public IReadOnlyList<FrameTiming> Frames
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _frames.ToArray();
+            }
+        }
+    }
+
+    /// <summary>
     /// Forgets everything collected so far.
     /// </summary>
     public void Clear()
@@ -114,6 +198,7 @@ public sealed class BrowserDiagnostics
             _requests.Clear();
             _pending.Clear();
             _messages.Clear();
+            _frames.Clear();
         }
 
         OnChanged();
@@ -128,7 +213,10 @@ public sealed class BrowserDiagnostics
                 return;
             }
 
-            var entry = new NetworkEntry(request.Method.ToString().ToUpperInvariant(), request.Address.Href, DateTimeOffset.Now, null, null, null, null);
+            var entry = new NetworkEntry(request.Method.ToString().ToUpperInvariant(), request.Address.Href, DateTimeOffset.Now, null, null, null, null)
+            {
+                RequestHeaders = new Dictionary<string, string>(request.Headers, StringComparer.OrdinalIgnoreCase),
+            };
             _pending[request] = entry;
             _requests.Add(entry);
         }
@@ -157,22 +245,28 @@ public sealed class BrowserDiagnostics
                 StatusCode = response?.StatusCode ?? 0,
                 ContentType = headers is not null && headers.TryGetValue(HeaderNames.ContentType, out var type) ? type : null,
                 ContentLength = length,
+                ResponseHeaders = headers is null ? entry.ResponseHeaders : new Dictionary<string, string>(headers, StringComparer.OrdinalIgnoreCase),
             };
         }
 
         OnChanged();
     }
 
-    internal void OnMessage(DiagnosticKind kind, string text)
+    internal void OnMessage(DiagnosticKind kind, string text) =>
+        AddMessage(new DiagnosticMessage(kind, DateTimeOffset.Now, text));
+
+    internal void OnError(Exception error) => AddMessage(CreateError(error));
+
+    internal void OnFrame(FrameTiming timing)
     {
         lock (_lock)
         {
-            if (_messages.Count >= MaxEntries)
+            if (_frames.Count >= MaxFrames)
             {
-                _messages.RemoveAt(0);
+                _frames.RemoveAt(0);
             }
 
-            _messages.Add(new DiagnosticMessage(kind, DateTimeOffset.Now, text));
+            _frames.Add(timing);
         }
 
         OnChanged();
@@ -201,6 +295,7 @@ public sealed class BrowserDiagnostics
             var start = index >= 0 ? _requests[index].StartedAt : _navigationStart;
             _requests.RemoveAll(m => m.StartedAt < start);
             _messages.RemoveAll(m => m.Time < start);
+            _frames.RemoveAll(m => m.Time < start);
 
             foreach (var request in _pending.Where(m => m.Value.StartedAt < start).Select(m => m.Key).ToArray())
             {
@@ -209,6 +304,56 @@ public sealed class BrowserDiagnostics
         }
 
         OnChanged();
+    }
+
+    private void AddMessage(DiagnosticMessage message)
+    {
+        lock (_lock)
+        {
+            if (_messages.Count >= MaxEntries)
+            {
+                _messages.RemoveAt(0);
+            }
+
+            _messages.Add(message);
+        }
+
+        OnChanged();
+    }
+
+    /// <summary>
+    /// Takes as much as is known from the exception. Errors of scripts may be wrapped, e.g., when
+    /// they passed through .NET code called by the script.
+    /// </summary>
+    private static DiagnosticMessage CreateError(Exception error)
+    {
+        var script = error;
+
+        while (script is not JavaScriptException && script.InnerException is { } inner)
+        {
+            script = inner;
+        }
+
+        if (script is JavaScriptException exception)
+        {
+            var location = exception.Location;
+            var source = location.SourceFile;
+            return new DiagnosticMessage(DiagnosticKind.Error, DateTimeOffset.Now, exception.Message)
+            {
+                ErrorType = exception.Error is ObjectInstance instance && instance.Get("name").ToString() is { Length: > 0 } name and not "undefined" ? name : "Thrown value",
+                // Jint's name for a script of unknown address, and AngleSharp.Js does not tell it the address
+                Source = string.IsNullOrEmpty(source) || source == "<anonymous>" ? null : source,
+                Line = location.Start.Line > 0 ? location.Start.Line : null,
+                Column = location.Start.Line > 0 ? location.Start.Column : null,
+                StackTrace = exception.JavaScriptStackTrace,
+            };
+        }
+
+        return new DiagnosticMessage(DiagnosticKind.Error, DateTimeOffset.Now, error.Message)
+        {
+            ErrorType = error.GetType().Name,
+            StackTrace = error.StackTrace,
+        };
     }
 
     private void OnChanged() => Changed?.Invoke(this, EventArgs.Empty);

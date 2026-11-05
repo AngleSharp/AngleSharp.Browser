@@ -15,6 +15,9 @@
   --success-soft: #e6f4ea;
   --warning: #8a5300;
   --warning-soft: #fef7e0;
+  --series-1: #2a6fdb;
+  --series-2: #e8590c;
+  --mono: "Cascadia Mono", "SF Mono", Menlo, "DejaVu Sans Mono", Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -34,6 +37,8 @@
     --success-soft: #0f5223;
     --warning: #ffb95c;
     --warning-soft: #4a2c00;
+    --series-1: #4a8fe8;
+    --series-2: #e8590c;
   }
 }
 
@@ -102,5 +107,75 @@ a {
   font-size: 11px;
   font-weight: 600;
   line-height: 17px;
+  text-align: center;
+}
+
+/* The side panels (diagnostics, inspector). */
+.top {
+  padding: 12px 12px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.title-row h1 {
+  font-size: 14px;
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.tab {
+  margin: 0;
+  padding: 6px 8px 7px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab.active {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+
+.tab.active .badge {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.tab .badge.alert {
+  background: var(--danger);
+  color: var(--bg);
+}
+
+.panel {
+  display: none;
+  padding: 12px;
+}
+
+.panel.active {
+  display: block;
+}
+
+.empty {
+  margin: 24px 0;
+  color: var(--muted);
   text-align: center;
 }

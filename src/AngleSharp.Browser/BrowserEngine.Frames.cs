@@ -2,8 +2,10 @@ namespace AngleSharp.Browser;
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using AngleSharp.Css.Dom;
 using AngleSharp.Dom;
 using AngleSharp.Html.Dom;
 using AngleSharp.Renderer.Rendering;
@@ -17,6 +19,7 @@ partial class BrowserEngine
     private volatile bool _needsLayout = true;
     private volatile bool _needsFullLayout = true;
     private bool _isSyncingScroll;
+    private volatile bool _isPageScrollLocked;
 
     /// <summary>
     /// What the last frame painted where, together with what the pointer would show for each
@@ -73,6 +76,8 @@ partial class BrowserEngine
         var shown = _pointerFrame;
         var document = _document;
         var position = ScrollPosition;
+        var time = DateTimeOffset.Now;
+        var start = Stopwatch.GetTimestamp();
 
         if (shown is not { Frame.CanReposition: true } || !ReferenceEquals(shown.Document, document) || shown.ScrollTop == position)
         {
@@ -93,7 +98,8 @@ partial class BrowserEngine
             Invalidated?.Invoke(this, EventArgs.Empty);
         }
 
-        return new BrowserFrame(frame, () => OnFramePainted(document));
+        var layout = Stopwatch.GetElapsedTime(start);
+        return new BrowserFrame(frame, raster => OnFramePainted(document, new FrameTiming(time, FrameKind.Reposition, layout, raster)));
     }
 
     private BrowserFrame? PrepareFrame()
@@ -107,6 +113,9 @@ partial class BrowserEngine
 
         var document = _document!;
         var version = Volatile.Read(ref _layoutVersion);
+        var time = DateTimeOffset.Now;
+        var start = Stopwatch.GetTimestamp();
+        var kind = FrameKind.Layout;
         RenderedFrame frame;
 
         // a page scrolling as a whole is laid out once more with its overscan before frames are reused
@@ -117,11 +126,13 @@ partial class BrowserEngine
             // only the page scrolled: the last frame's display list covers all of it already, and
             // fixed boxes stay in place
             frame = last.Frame.Reposition(ScrollTop);
+            kind = FrameKind.Reposition;
         }
         else if (!_needsFullLayout && TryReuseLastFrame(document) is { } reused)
         {
             _needsLayout = false;
             frame = reused;
+            kind = FrameKind.Update;
         }
         else
         {
@@ -133,6 +144,7 @@ partial class BrowserEngine
             {
                 AdvanceClock();
                 frame = _harness.PrepareFrame(ViewportHeight / 2);
+                UpdatePageScrollLock(document);
             }
             catch (Exception ex)
             {
@@ -165,7 +177,8 @@ partial class BrowserEngine
 
         // the list of an open dropdown is on top of the frame
         var shown = RefreshSelectPopup() is { } popup ? frame.WithOverlay(popup.Overlay) : frame;
-        return new BrowserFrame(shown, () => OnFramePainted(document));
+        var layout = Stopwatch.GetElapsedTime(start);
+        return new BrowserFrame(shown, raster => OnFramePainted(document, new FrameTiming(time, kind, layout, raster)));
     }
 
     /// <summary>
@@ -193,6 +206,22 @@ partial class BrowserEngine
         return frame.CanReposition && (frame.OverscanTop > 0 || !frame.IsScrollShiftable) ? frame.Reposition(scrollTop) : null;
     }
 
+    /// <summary>
+    /// A page with overflow: hidden on its root (or, as that is propagated, on its body) cannot
+    /// be scrolled by the user, while it stays where it is, e.g., for the time a dialog is open.
+    /// </summary>
+    private void UpdatePageScrollLock(IDocument document)
+    {
+        var overflow = document.DocumentElement?.ComputeCurrentStyle().GetPropertyValue("overflow-y");
+
+        if (string.IsNullOrEmpty(overflow) || overflow == "visible")
+        {
+            overflow = document.Body?.ComputeCurrentStyle().GetPropertyValue("overflow-y");
+        }
+
+        _isPageScrollLocked = overflow is "hidden" or "clip";
+    }
+
     private void AdvanceClock()
     {
         var now = Environment.TickCount64;
@@ -205,8 +234,10 @@ partial class BrowserEngine
         _lastPaint = now;
     }
 
-    private void OnFramePainted(IDocument document)
+    private void OnFramePainted(IDocument document, FrameTiming timing)
     {
+        _diagnostics.OnFrame(timing);
+
         if (!ReferenceEquals(Interlocked.Exchange(ref _paintedDocument, document), document))
         {
             OnStateChanged();

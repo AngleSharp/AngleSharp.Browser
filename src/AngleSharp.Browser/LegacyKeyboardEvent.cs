@@ -3,6 +3,7 @@ namespace AngleSharp.Browser;
 using AngleSharp.Attributes;
 using AngleSharp.Dom;
 using AngleSharp.Html.Dom.Events;
+using System.Linq;
 
 /// <summary>
 /// A keyboard event that also carries the legacy key codes (UI Events, Legacy key models), which
@@ -29,6 +30,12 @@ public sealed class LegacyKeyboardEvent : KeyboardEvent
         KeyCode = type == "keypress" ? charCode : GetKeyCode(key);
         CharCode = charCode;
     }
+
+    /// <summary>
+    /// Gets the physical key, as far as the key value tells: a host only knows what was typed.
+    /// </summary>
+    [DomName("code")]
+    public string Code => GetCode(Key ?? string.Empty);
 
     /// <summary>
     /// Gets the legacy key code, e.g. 13 for Enter (the character code for keypress).
@@ -88,5 +95,15 @@ public sealed class LegacyKeyboardEvent : KeyboardEvent
         "/" => 191,
         _ when key.Length > 1 && key[0] == 'F' && int.TryParse(key[1..], out var number) && number is >= 1 and <= 12 => 111 + number,
         _ => 0,
+    };
+
+    private static string GetCode(string key) => key switch
+    {
+        " " => "Space",
+        "Enter" or "Tab" or "Escape" or "Backspace" or "Delete" or "Home" or "End" or "PageUp" or "PageDown" or "Insert"
+            or "ArrowUp" or "ArrowDown" or "ArrowLeft" or "ArrowRight" => key,
+        { Length: 1 } when char.IsAsciiLetter(key[0]) => "Key" + char.ToUpperInvariant(key[0]),
+        { Length: 1 } when char.IsAsciiDigit(key[0]) => "Digit" + key,
+        _ => key.Length > 1 && key[0] == 'F' && key[1..].All(char.IsDigit) ? key : string.Empty,
     };
 }

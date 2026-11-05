@@ -21,7 +21,7 @@ The following APIs cover most day-to-day tasks:
 - `ClickAsync`, `TextInputAsync`, `KeyDownAsync`, `ScrollAsync`
 : Interacts with the page like a user.
 - `Diagnostics`
-: Lists the requests, errors and console output of the page.
+: Lists the requests, errors, console output and frame timings of the page.
 - `BrowserView`
 : Displays an engine in Avalonia.
 
@@ -80,8 +80,9 @@ All asynchronous methods take an optional `CancellationToken`.
 
 | Member | Description |
 | --- | --- |
-| `Requests` | A list of `NetworkEntry`: `Method`, `Url`, `StartedAt`, `Duration`, `StatusCode`, `ContentType`, `ContentLength`, `IsPending`. |
-| `Messages` | A list of `DiagnosticMessage`: `Kind` (`Console` or `Error`), `Time`, `Text`. |
+| `Requests` | A list of `NetworkEntry`: `Method`, `Url`, `StartedAt`, `Duration`, `StatusCode`, `ContentType`, `ContentLength`, `RequestHeaders`, `ResponseHeaders`, `IsPending`. |
+| `Messages` | A list of `DiagnosticMessage`: `Kind` (`Console` or `Error`), `Time`, `Text`, and for errors `ErrorType`, `Source`, `Line`, `Column`, `StackTrace`. |
+| `Frames` | A list of `FrameTiming` for the latest painted frames: `Time`, `Kind` (`Layout`, `Update` or `Reposition`), `Layout`, `Raster`. |
 | `Changed` | Raised when something was added or cleared, on any thread. |
 | `Clear()` | Removes what has been collected. |
 
