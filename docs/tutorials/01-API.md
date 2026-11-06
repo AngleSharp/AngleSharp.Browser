@@ -33,6 +33,7 @@ The following APIs cover most day-to-day tasks:
 | --- | --- |
 | `Url`, `Title` | The address (including one being loaded) and the title. |
 | `IsLoading` | If a navigation is ongoing. |
+| `IconUrl`, `IconUrls`, `Certificate` | The page's icon and the `ServerCertificate` of its connection. See [Site Information](../general/02-Engine.md#site-information). |
 | `CanGoBack`, `CanGoForward` | The state of the history. |
 | `Document`, `Context` | The current `IDocument` (use it within `InvokeAsync`) and the `IBrowsingContext`. |
 | `ViewportWidth`, `ViewportHeight` | The size of the viewport in CSS pixels. |
@@ -59,6 +60,7 @@ The following APIs cover most day-to-day tasks:
 | `KeyDownAsync`, `KeyUpAsync`, `TextInputAsync` | Keyboard input. |
 | `ScrollAsync(deltaX, deltaY)`, `ScrollToAsync(top, animate)` | Scrolling. |
 | `CreateWindow()`, `CreateWindow(options)` | Creates an engine sharing the profile. |
+| `LoadIconAsync()`, `GetCertificate(host)` | Loads the page's icon, or gets the certificate of a host. |
 
 All asynchronous methods take an optional `CancellationToken`.
 

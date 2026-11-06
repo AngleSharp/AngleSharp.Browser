@@ -28,6 +28,25 @@ await engine.NavigateAsync("example.org");
 Console.WriteLine(engine.CanGoBack);
 ```
 
+## Site Information
+
+| Member | Description |
+| --- | --- |
+| `IconUrls`, `IconUrl` | Where the page's icon may come from, best first: bitmaps of `<link rel="icon">`, then of `<link rel="apple-touch-icon">`, `/favicon.ico` of an HTTP(S) page, and declared SVG icons last. `IconUrl` is the first of them. |
+| `LoadIconAsync()` | Loads the first of them that is an image, with the page's cookies and cache; `null` if there is none. Images are recognized by their content, as servers send icons with all kinds of content types. |
+| `Certificate` | The `ServerCertificate` the server of the current HTTPS page presented. |
+| `GetCertificate(host)` | The certificate a host presented the last time the engine connected to it. |
+
+A changed icon raises `StateChanged`. A `ServerCertificate` is a snapshot of what the platform verified: names, issuer, validity, fingerprints, key, the chain up to the root, and `PolicyErrors` (`IsValid`). The engine captures it in the validation callback of its HTTP handler, keeping the platform's verdict; a host setting its own callback (via `BrowserOptions.ConfigureIo`) can use `ServerCertificate.Create` to the same end. A page served from the HTTP cache without a new connection may have no certificate.
+
+```cs
+engine.StateChanged += async (_, _) =>
+{
+    var icon = await engine.LoadIconAsync();
+    Console.WriteLine($"{engine.IconUrl}: {icon?.Length ?? 0} bytes, issued by {engine.Certificate?.IssuerName}");
+};
+```
+
 ## Threading
 
 AngleSharp is not thread-safe, so all DOM work is serialized and runs on AngleSharp's event loop. This has some consequences:
@@ -70,7 +89,7 @@ The underlying `IBrowsingContext` is available via `Context`, e.g., to retrieve 
 | Event | Raised when |
 | --- | --- |
 | `Invalidated` | The visual output changed and a new frame should be painted. |
-| `StateChanged` | The address, title, loading state, or history state changed. |
+| `StateChanged` | The address, title, icon, loading state, or history state changed. |
 | `HoverChanged` | The hovered link or the cursor changed. |
 | `ScrollChanged` | The scroll position changed. |
 | `WindowRequested` | The page asks for a new window. See [Configuration](05-Configuration.md#multiple-windows). |

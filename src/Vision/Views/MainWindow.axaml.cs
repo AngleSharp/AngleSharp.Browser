@@ -19,6 +19,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        Icon = AppIcon.Default;
     }
 
     protected override void OnDataContextChanged(EventArgs e)
@@ -40,6 +41,12 @@ public partial class MainWindow : Window
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(MainViewModel.PageIcon) && AppIcon.CanShowPageIcon)
+        {
+            // the title bar shows the page's icon, like the tab of other browsers
+            Icon = _viewModel!.PageIcon is { } icon ? new WindowIcon(icon) : AppIcon.Default;
+        }
+
         if (e.PropertyName == nameof(MainViewModel.IsPanelOpen))
         {
             var column = ContentGrid.ColumnDefinitions[2];

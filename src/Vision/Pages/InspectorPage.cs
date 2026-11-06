@@ -31,6 +31,8 @@ public sealed class InspectorPage : HtmlPage
     private const int MaxRows = 3000;
     private const int ChildrenPage = 200;
     private const int MaxMatchedRules = 40;
+    // AngleSharp.Css keeps rules with selectors it can't parse (e.g., vendor pseudo-elements), without their selector
+    private const string UnsupportedSelector = "(unsupported selector)";
     private const int MaxIndent = 28;
 
     private readonly BrowserEngine _target;
@@ -426,7 +428,7 @@ public sealed class InspectorPage : HtmlPage
         // what wins comes first, like in the cascade
         foreach (var match in matches.OrderByDescending(m => m.Priority).ThenByDescending(m => m.Order).Take(MaxMatchedRules))
         {
-            html.Append(Rule(match.Rule.SelectorText, SheetName(match.Rule.Owner), match.Rule.Style.CssText));
+            html.Append(Rule(match.Rule.SelectorText ?? UnsupportedSelector, SheetName(match.Rule.Owner), match.Rule.Style.CssText));
         }
 
         if (matches.Count > MaxMatchedRules)
@@ -465,7 +467,7 @@ public sealed class InspectorPage : HtmlPage
 
         if (rule is ICssStyleRule style)
         {
-            html.Append(Pair("Matches", CountMatches(document, style.SelectorText)));
+            html.Append(Pair("Matches", style.SelectorText is { } selector ? CountMatches(document, selector) : "None (the selector is not supported)"));
         }
 
         html.Append(Section("Rule", $"""<pre class="code">{Encode(rule.CssText)}</pre>"""));
@@ -700,8 +702,8 @@ public sealed class InspectorPage : HtmlPage
         {
             var (label, children) = rule switch
             {
-                ICssStyleRule style => ($"""<span class="selector">{Encode(Shorten(style.SelectorText))}</span>""", style.Rules.ToList()),
-                ICssMediaRule media => ($"""<span class="at">@media</span> {Encode(Shorten(media.ConditionText))}""", media.Rules.ToList()),
+                ICssStyleRule style => ($"""<span class="selector">{Encode(Shorten(style.SelectorText ?? UnsupportedSelector))}</span>""", style.Rules.ToList()),
+                ICssMediaRule media => ($"""<span class="at">@media</span> {Encode(Shorten(media.ConditionText ?? string.Empty))}""", media.Rules.ToList()),
                 ICssGroupingRule group => ($"""<span class="at">{Encode(group.Type.ToString())}</span>""", group.Rules.ToList()),
                 ICssKeyframesRule frames => ($"""<span class="at">@keyframes</span> {Encode(frames.Name)}""", frames.Rules.ToList()),
                 _ => ($"""<span class="at">{Encode(Shorten(rule.CssText))}</span>""", []),

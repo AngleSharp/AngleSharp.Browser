@@ -7,7 +7,10 @@ using AngleSharp.Browser;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
+using System.Diagnostics;
+using System.IO;
 using Vision.Pages;
 
 public partial class MainViewModel : ViewModelBase, IDisposable
@@ -18,6 +21,8 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     private HtmlPage? _panel;
     private string? _lastUrl;
     private int _isErrorCheckPending;
+    private string? _iconUrl;
+    private CancellationTokenSource? _iconLoading;
 
     public MainViewModel(BrowserEngine engine, string startAddress, IBrowserHost host)
     {
@@ -51,6 +56,15 @@ public partial class MainViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty]
     public partial string SiteInfo { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets the icon of the page, once it has been loaded.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPageIcon))]
+    public partial Bitmap? PageIcon { get; set; }
+
+    public bool HasPageIcon => PageIcon is not null;
 
     /// <summary>
     /// Gets if the page reported errors, which the diagnostics show.
@@ -95,6 +109,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     {
         Engine.Diagnostics.Changed -= OnDiagnosticsChanged;
         _host.ColorSchemeChanged -= OnColorSchemeChanged;
+        _iconLoading?.Cancel();
         ClosePanel();
     }
 
@@ -122,6 +137,9 @@ public partial class MainViewModel : ViewModelBase, IDisposable
 
     [RelayCommand]
     private void OpenAbout() => _host.OpenAbout(Engine);
+
+    [RelayCommand]
+    private void OpenSiteInfo() => _host.OpenSiteInfo(Engine);
 
     [RelayCommand]
     private Task ToggleDiagnosticsAsync() => TogglePanelAsync<DiagnosticsPage>(() => new DiagnosticsPage(_host.ColorScheme, Engine));
@@ -204,11 +222,51 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         IsSecure = isSecure;
         SiteInfo = isSecure ? "Connection is secure" : "Connection is not secure";
         WindowTitle = string.IsNullOrWhiteSpace(Engine.Title) ? ApplicationName : $"{Engine.Title} - {ApplicationName}";
+
+        if (Engine.IconUrl != _iconUrl)
+        {
+            _iconUrl = Engine.IconUrl;
+            _ = LoadIconAsync();
+        }
+
         // a page has loaded once it is visible, which needs its first frame
         IsLoading = Engine.IsLoading || !Engine.HasPaintedDocument;
         GoBackCommand.NotifyCanExecuteChanged();
         GoForwardCommand.NotifyCanExecuteChanged();
         UpdateStatus();
+    }
+
+    /// <summary>
+    /// Loads the icon of the current page, which replaces the one of the previous page.
+    /// </summary>
+    private async Task LoadIconAsync()
+    {
+        _iconLoading?.Cancel();
+        var loading = _iconLoading = new CancellationTokenSource();
+        Bitmap? icon = null;
+
+        try
+        {
+            if (await Engine.LoadIconAsync(loading.Token) is { } content)
+            {
+                // bitmaps of any kind (PNG, ICO, ...) but SVG, sized for the toolbar and the title bar
+                using var stream = new MemoryStream(content);
+                icon = Bitmap.DecodeToWidth(stream, 64, BitmapInterpolationMode.HighQuality);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Trace.WriteLine($"Loading the page icon failed: {ex.Message}");
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (!loading.IsCancellationRequested)
+        {
+            PageIcon = icon;
+        }
     }
 
     private void UpdateStatus()

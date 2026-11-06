@@ -1,0 +1,160 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Site information</title>
+<style>
+{{styles}}
+
+html,
+body {
+  background: var(--surface);
+}
+
+.page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 24px 24px 20px;
+}
+
+.intro {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.intro .text {
+  flex: 1;
+  min-width: 0;
+}
+
+.intro h1 {
+  font-size: 22px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.intro p {
+  margin: 2px 0 0;
+}
+
+.verdict {
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border-radius: 12px;
+}
+
+.verdict strong {
+  display: block;
+  font-size: 14px;
+}
+
+.verdict.secure {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.verdict.insecure {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.verdict.unknown {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.section {
+  margin-bottom: 14px;
+  padding: 4px 18px;
+  border-radius: 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.section h2 {
+  padding: 10px 0 2px;
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.pair {
+  display: flex;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.pair:last-child {
+  border-bottom: 0;
+}
+
+.pair .name {
+  flex: 0 0 150px;
+  color: var(--muted);
+}
+
+.pair .value {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pair .value.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.chip {
+  display: inline-block;
+  margin: 0 4px 4px 0;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: var(--surface-strong);
+  font-size: 12px;
+}
+
+.expired {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.path {
+  padding: 8px 0;
+}
+
+.path .step {
+  padding: 3px 0;
+}
+
+.path .step .who {
+  font-weight: 600;
+}
+
+.path .step.leaf .who {
+  color: var(--accent);
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="intro">
+      <div class="text">
+        <h1 id="host"></h1>
+        <p class="muted" id="address"></p>
+      </div>
+    </div>
+
+    <div id="content"></div>
+
+    <div class="footer">
+      <button type="button" class="button primary" id="close">Close</button>
+    </div>
+  </div>
+</body>
+</html>

@@ -9,3 +9,5 @@ Released on Monday, November 2 2026.
 - Added details of errors (type, location and stack trace), request headers and frame timings to `BrowserDiagnostics`
 - Added a waterfall of the requests, the rendering timings and the stack traces of errors to the diagnostics of `Vision`
 - Added an inspector to `Vision`, showing the DOM, the CSSOM and the render tree of a page
+- Added the page's icon (`IconUrl`, `IconUrls`, `LoadIconAsync`) and the certificate of its connection (`Certificate`, `ServerCertificate`) to `BrowserEngine`
+- Added the page's icon and a site information window (the certificate and its chain) to `Vision`, which got its own icon and application menu

@@ -26,4 +26,9 @@ public interface IBrowserHost
     void OpenSettings();
 
     void OpenAbout(BrowserEngine owner);
+
+    /// <summary>
+    /// Shows how the connection to the site of the engine's page is secured.
+    /// </summary>
+    void OpenSiteInfo(BrowserEngine owner);
 }

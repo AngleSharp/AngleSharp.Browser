@@ -119,6 +119,13 @@ public sealed partial class BrowserEngine : IDisposable
         var ioOptions = options.CreateIoOptions(opener?._ioOptions);
         // every engine of a profile has to see the same cookies, not its own copy of the file
         _ioOptions = ioOptions;
+
+        // the site information shows the certificate of the connection (unless the host verifies certificates itself)
+        if (ioOptions.HttpHandler is { ServerCertificateCustomValidationCallback: null } handler)
+        {
+            TrackCertificates(handler, _certificates);
+        }
+
         _cookies = opener?._cookies ?? new SynchronizedCookieProvider(new AdvancedCookieProvider(ioOptions.CookieHandler));
         var config = Configuration.Default
             // one loop for the page and its iframes: scripts of all of them run on it, and the
@@ -697,6 +704,8 @@ public sealed partial class BrowserEngine : IDisposable
             _title = active.Title ?? string.Empty;
             OnStateChanged();
         }
+
+        SyncIcon(active);
 
         // a document still being parsed may not have a root to observe yet
         if (_observer is null && active?.DocumentElement is IElement root)

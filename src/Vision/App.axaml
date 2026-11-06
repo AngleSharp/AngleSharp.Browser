@@ -1,9 +1,20 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="Vision.App"
+             Name="Vision"
              xmlns:local="using:Vision"
              RequestedThemeVariant="Default">
              <!-- "Default" ThemeVariant follows system theme variant; the settings may pick "Dark" or "Light". -->
+
+    <!-- the application menu of macOS; Avalonia adds the usual items (hide, quit) after them -->
+    <NativeMenu.Menu>
+        <NativeMenu>
+            <NativeMenuItem Header="About Vision" Click="OnAboutClicked" />
+            <NativeMenuItemSeparator />
+            <NativeMenuItem Header="Settings…" Gesture="Cmd+OemComma" Click="OnSettingsClicked" />
+            <NativeMenuItem Header="New Window" Gesture="Cmd+N" Click="OnNewWindowClicked" />
+        </NativeMenu>
+    </NativeMenu.Menu>
 
     <Application.DataTemplates>
         <local:ViewLocator />
@@ -111,6 +122,18 @@
         </Style>
         <Style Selector="Button.icon:disabled PathIcon">
             <Setter Property="Opacity" Value="0.35" />
+        </Style>
+
+        <!-- the site information button inside of the address bar -->
+        <Style Selector="Button.icon.site">
+            <Setter Property="Width" Value="28" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="CornerRadius" Value="14" />
+        </Style>
+        <Style Selector="Button.icon.site PathIcon">
+            <Setter Property="Width" Value="14" />
+            <Setter Property="Height" Value="14" />
+            <Setter Property="Foreground" Value="{DynamicResource ChromeMutedTextBrush}" />
         </Style>
 
         <!-- the address bar: a pill, which lights up while typing -->

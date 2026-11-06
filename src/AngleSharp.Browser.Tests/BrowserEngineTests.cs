@@ -1442,6 +1442,122 @@ public class BrowserEngineTests
     }
 
     [Test]
+    public async Task TheIconOfAPageIsTheOneItsLinkDeclares()
+    {
+        var png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==");
+        using var server = new TestServer(new()
+        {
+            ["/"] = ("text/html", "<html><head><link rel='shortcut icon' href='/icons/site.png'></head><body>Hi</body></html>"u8.ToArray()),
+            ["/icons/site.png"] = ("image/png", png),
+        });
+
+        await _engine.NavigateAsync(server.Address);
+        await Eventually(() => _engine.IconUrl is not null);
+        var icon = await _engine.LoadIconAsync();
+
+        Assert.That(_engine.IconUrl, Is.EqualTo($"{server.Address}icons/site.png"));
+        Assert.That(icon, Is.EqualTo(png));
+    }
+
+    [Test]
+    public async Task APageWithoutIconFallsBackToTheFaviconOfItsSite()
+    {
+        using var server = new TestServer(new()
+        {
+            ["/page"] = ("text/html", "<p>Hi</p>"u8.ToArray()),
+            ["/favicon.ico"] = ("text/html", "<p>Not an image</p>"u8.ToArray()),
+        });
+
+        await _engine.NavigateAsync($"{server.Address}page");
+        await Eventually(() => _engine.IconUrl is not null);
+
+        Assert.That(_engine.IconUrl, Is.EqualTo($"{server.Address}favicon.ico"));
+        // what is not an image is no icon
+        Assert.That(await _engine.LoadIconAsync(), Is.Null);
+    }
+
+    [Test]
+    public async Task AFaviconIsAnImageWhateverItsServerClaims()
+    {
+        // an icon of 1x1, as servers often send them: with a content type that is no image's
+        var ico = new byte[] { 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 32, 0, 48, 0, 0, 0, 22, 0, 0, 0 }
+            .Concat(new byte[48]).ToArray();
+        using var server = new TestServer(new()
+        {
+            ["/"] = ("text/html", "<p>Hi</p>"u8.ToArray()),
+            ["/favicon.ico"] = ("application/octet-stream", ico),
+        });
+
+        await _engine.NavigateAsync(server.Address);
+        await Eventually(() => _engine.IconUrl is not null);
+
+        Assert.That(await _engine.LoadIconAsync(), Is.EqualTo(ico));
+    }
+
+    [Test]
+    public async Task IconsThatCannotBeLoadedOrShownGiveWayToTheFaviconOfTheSite()
+    {
+        var png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==");
+        using var server = new TestServer(new()
+        {
+            ["/"] = ("text/html", "<html><head><link rel=icon href=/logo.svg><link rel=icon href=/missing.png><link rel=apple-touch-icon href=/touch.png></head><body>Hi</body></html>"u8.ToArray()),
+            ["/logo.svg"] = ("image/svg+xml", "<svg xmlns='http://www.w3.org/2000/svg'/>"u8.ToArray()),
+            ["/favicon.ico"] = ("image/x-icon", png),
+        });
+
+        await _engine.NavigateAsync(server.Address);
+        await Eventually(() => _engine.IconUrls.Count == 4);
+
+        Assert.That(_engine.IconUrls, Is.EqualTo(new[]
+        {
+            $"{server.Address}missing.png",
+            $"{server.Address}touch.png",
+            $"{server.Address}favicon.ico",
+            $"{server.Address}logo.svg",
+        }));
+        Assert.That(await _engine.LoadIconAsync(), Is.EqualTo(png));
+    }
+
+    [Test]
+    public async Task APageNotFromTheWebHasNoIconOrCertificate()
+    {
+        await _engine.LoadHtmlAsync("<p>Hi</p>");
+
+        Assert.That(_engine.IconUrl, Is.Null);
+        Assert.That(_engine.Certificate, Is.Null);
+        Assert.That(await _engine.LoadIconAsync(), Is.Null);
+    }
+
+    [Test]
+    public void TheCertificateOfAConnectionIsKeptWithTheVerdictOfThePlatform()
+    {
+        using var key = System.Security.Cryptography.RSA.Create(2048);
+        var request = new System.Security.Cryptography.X509Certificates.CertificateRequest(
+            "CN=example.org, O=Example Inc", key, System.Security.Cryptography.HashAlgorithmName.SHA256, System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+        var names = new System.Security.Cryptography.X509Certificates.SubjectAlternativeNameBuilder();
+        names.AddDnsName("example.org");
+        names.AddDnsName("www.example.org");
+        request.CertificateExtensions.Add(names.Build());
+        using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(30));
+        using var handler = new System.Net.Http.HttpClientHandler();
+        var certificates = new System.Collections.Concurrent.ConcurrentDictionary<string, ServerCertificate>();
+        BrowserEngine.TrackCertificates(handler, certificates);
+
+        var accepted = handler.ServerCertificateCustomValidationCallback!(
+            new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "https://example.org/"), certificate, null,
+            System.Net.Security.SslPolicyErrors.RemoteCertificateChainErrors);
+        var info = certificates["example.org"];
+
+        Assert.That(accepted, Is.False);
+        Assert.That(info.IsValid, Is.False);
+        Assert.That(info.CommonName, Is.EqualTo("example.org"));
+        Assert.That(info.Organization, Is.EqualTo("Example Inc"));
+        Assert.That(info.AlternativeNames, Is.EqualTo(new[] { "example.org", "www.example.org" }));
+        Assert.That(info.PublicKey, Is.EqualTo("RSA (2048 bits)"));
+        Assert.That(info.Sha256Fingerprint, Has.Length.EqualTo(64));
+    }
+
+    [Test]
     public async Task RequestsCarryDefaultHeaders()
     {
         using var server = new TestServer(new()
