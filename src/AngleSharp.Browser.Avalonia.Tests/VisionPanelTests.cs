@@ -170,6 +170,9 @@ public class VisionPanelTests
         await page.Engine.InvokeAsync(d => ((IHtmlElement)d!.GetElementById("tab-performance")!).DoClick());
 
         await WaitUntil(page, d => d!.QuerySelector("#performance .frame .layout") is not null);
+        var text = await page.Engine.InvokeAsync(d => d!.GetElementById("performance")!.TextContent);
+        Assert.That(text, Does.Contain("Latest layout"));
+        Assert.That(text, Does.Contain("trial layouts"));
     }
 
     [AvaloniaTest]

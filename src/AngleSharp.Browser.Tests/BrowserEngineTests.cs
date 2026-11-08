@@ -12,6 +12,7 @@ using AngleSharp.Html.Dom;
 using AngleSharp.Html.Dom.Events;
 using AngleSharp.Io;
 using AngleSharp.Js;
+using AngleSharp.Renderer.Rendering;
 using NUnit.Framework;
 
 [TestFixture]
@@ -1442,6 +1443,26 @@ public class BrowserEngineTests
     }
 
     [Test]
+    public async Task CompressedResponsesAreDecompressedEvenIfNotAskedFor()
+    {
+        using var compressed = new System.IO.MemoryStream();
+
+        using (var gzip = new System.IO.Compression.GZipStream(compressed, System.IO.Compression.CompressionLevel.Fastest, leaveOpen: true))
+        {
+            gzip.Write("<title>Compressed</title>"u8);
+        }
+
+        using var server = new TestServer(new()
+        {
+            ["/"] = ("text/html", compressed.ToArray()),
+        });
+
+        await _engine.NavigateAsync(server.Address);
+
+        Assert.That(_engine.Document!.Title, Is.EqualTo("Compressed"));
+    }
+
+    [Test]
     public async Task TheIconOfAPageIsTheOneItsLinkDeclares()
     {
         var png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==");
@@ -1688,9 +1709,47 @@ public class BrowserEngineTests
         Assert.That(timing.Kind, Is.EqualTo(FrameKind.Layout));
         Assert.That(timing.Layout, Is.GreaterThan(TimeSpan.Zero));
         Assert.That(timing.Raster, Is.GreaterThan(TimeSpan.Zero));
+        Assert.That(timing.Metrics.Style, Is.GreaterThan(TimeSpan.Zero));
+        Assert.That(timing.Metrics.Layout, Is.GreaterThan(TimeSpan.Zero));
+        Assert.That(timing.Metrics.Total, Is.LessThanOrEqualTo(timing.Layout));
+        Assert.That(timing.Metrics.Boxes, Is.GreaterThan(0));
+        Assert.That(timing.Metrics.IsIncremental, Is.False);
 
         _engine.Diagnostics.Clear();
         Assert.That(_engine.Diagnostics.Frames, Is.Empty);
+    }
+
+    [Test]
+    public async Task DiagnosticsReportTheMetricsOfALayoutOnce()
+    {
+        await _engine.LoadHtmlAsync("<p>Hello</p>");
+        // the first frame shows what is in view, the next one lays out all of the page
+        (await _engine.PrepareFrameAsync())!.Rasterize();
+        (await _engine.PrepareFrameAsync())!.Rasterize();
+
+        // nothing changed: the frame shown is the one laid out before
+        (await _engine.PrepareFrameAsync())!.Rasterize();
+
+        var timings = _engine.Diagnostics.Frames;
+        Assert.That(timings, Has.Count.EqualTo(3));
+        Assert.That(timings[1].Metrics, Is.Not.SameAs(RenderMetrics.None));
+        Assert.That(timings.Count(m => ReferenceEquals(m.Metrics, timings[1].Metrics)), Is.EqualTo(1));
+    }
+
+    [Test]
+    public async Task APageShowsWhatIsInViewFirstAndAllOfItWithTheNextFrame()
+    {
+        await _engine.LoadHtmlAsync("""<body style="margin: 0"><div style="height: 5000px; background: #00ff00"></div><p>End</p>""");
+
+        var first = await _engine.PrepareFrameAsync();
+        Assert.That(PixelOf(first!, 10, 10), Is.EqualTo(((byte)0, (byte)255, (byte)0)));
+
+        (await _engine.PrepareFrameAsync())!.Rasterize();
+
+        var timings = _engine.Diagnostics.Frames;
+        Assert.That(string.Join(", ", timings.Select(m => m.Kind)), Is.EqualTo("Layout, Layout"));
+        Assert.That(timings[0].Metrics.Boxes, Is.LessThan(timings[1].Metrics.Boxes));
+        Assert.That(_engine.ScrollHeight, Is.GreaterThan(5000));
     }
 
     [TestCase("html")]

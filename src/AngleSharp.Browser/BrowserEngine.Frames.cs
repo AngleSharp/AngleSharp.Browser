@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using AngleSharp.Css.Dom;
 using AngleSharp.Dom;
 using AngleSharp.Html.Dom;
+using AngleSharp.Renderer;
 using AngleSharp.Renderer.Rendering;
 
 partial class BrowserEngine
@@ -15,9 +16,13 @@ partial class BrowserEngine
     private PointerFrame? _pointerFrame;
     private IDocument? _paintedDocument;
     private (RenderedFrame Frame, IDocument Document, int Width, int Height, int LayoutVersion)? _lastFrame;
+    // the latest frame the harness laid out or patched, whose metrics are reported once
+    private RenderedFrame? _lastLaidOutFrame;
     // anything but scrolling the page invalidates the last frame's layout
     private volatile bool _needsLayout = true;
     private volatile bool _needsFullLayout = true;
+    // if CSS transitions or animations ran in the last frame, i.e., time changes how it looks
+    private volatile bool _isLastFrameAnimating;
     private bool _isSyncingScroll;
     private volatile bool _isPageScrollLocked;
 
@@ -116,6 +121,7 @@ partial class BrowserEngine
         var time = DateTimeOffset.Now;
         var start = Stopwatch.GetTimestamp();
         var kind = FrameKind.Layout;
+        var metrics = RenderMetrics.None;
         RenderedFrame frame;
 
         // a page scrolling as a whole is laid out once more with its overscan before frames are reused
@@ -128,11 +134,12 @@ partial class BrowserEngine
             frame = last.Frame.Reposition(ScrollTop);
             kind = FrameKind.Reposition;
         }
-        else if (!_needsFullLayout && TryReuseLastFrame(document) is { } reused)
+        else if (!_needsFullLayout && TryReuseLastFrame(document, out var patched) is { } reused)
         {
             _needsLayout = false;
             frame = reused;
             kind = FrameKind.Update;
+            metrics = patched;
         }
         else
         {
@@ -143,7 +150,12 @@ partial class BrowserEngine
             try
             {
                 AdvanceClock();
-                frame = _harness.PrepareFrame(ViewportHeight / 2);
+                // a page shows up once what is in view is laid out, the next frame lays out all of it
+                frame = _lastFrame is { } previous && ReferenceEquals(previous.Document, document)
+                    ? _harness.PrepareFrame(ViewportHeight / 2)
+                    : _harness.PrepareViewportFrame(ViewportHeight / 2);
+                _lastLaidOutFrame = frame;
+                metrics = frame.Metrics;
                 UpdatePageScrollLock(document);
             }
             catch (Exception ex)
@@ -160,7 +172,12 @@ partial class BrowserEngine
         _lastFrame = (frame, document, ViewportWidth, ViewportHeight, version);
 
         _pointerFrame = new PointerFrame(document, frame, frame.HitTestMap, CreatePointerInfos(frame.HitTestMap), frame.ScrollTop, frame.IsScrollShiftable, version);
-        UpdateScrollExtent(frame.ContentHeight, version);
+        // the page goes on below what a frame of the viewport only shows (it is animating)
+        if (!frame.IsPartial)
+        {
+            UpdateScrollExtent(frame.ContentHeight, version);
+        }
+
         AdoptScrollPosition(frame.ScrollTop);
         // the content below the pointer may have moved; like other browsers, the hover state
         // waits until scrolling ends, as each change of it needs a layout
@@ -168,6 +185,8 @@ partial class BrowserEngine
         {
             UpdateHover(_lastPointer.X, _lastPointer.Y, isMove: false);
         }
+
+        _isLastFrameAnimating = frame.IsAnimating;
 
         // the first frame of a page tells if it scrolls as a whole, then it gets an overscan
         if (frame.IsAnimating || (frame is { IsScrollShiftable: true, OverscanTop: 0 } && ViewportHeight > 1))
@@ -178,7 +197,7 @@ partial class BrowserEngine
         // the list of an open dropdown is on top of the frame
         var shown = RefreshSelectPopup() is { } popup ? frame.WithOverlay(popup.Overlay) : frame;
         var layout = Stopwatch.GetElapsedTime(start);
-        return new BrowserFrame(shown, raster => OnFramePainted(document, new FrameTiming(time, kind, layout, raster)));
+        return new BrowserFrame(shown, raster => OnFramePainted(document, new FrameTiming(time, kind, layout, raster) { Metrics = metrics }));
     }
 
     /// <summary>
@@ -188,12 +207,21 @@ partial class BrowserEngine
     /// every scroll), else the boxes out of the flow that changed are replaced in it (e.g. a menu
     /// changing its items). Requires exclusive access.
     /// </summary>
-    private RenderedFrame? TryReuseLastFrame(IDocument document)
+    private RenderedFrame? TryReuseLastFrame(IDocument document, out RenderMetrics metrics)
     {
+        metrics = RenderMetrics.None;
+
         if (_lastFrame is not { } last || !ReferenceEquals(last.Document, document) || last.Width != ViewportWidth || last.Height != ViewportHeight ||
             _harness.UpdateFrame() is not { } frame)
         {
             return null;
+        }
+
+        // the frame the harness had already, or one with boxes laid out since
+        if (!ReferenceEquals(frame, _lastLaidOutFrame))
+        {
+            _lastLaidOutFrame = frame;
+            metrics = frame.Metrics;
         }
 
         var scrollTop = ScrollTop;

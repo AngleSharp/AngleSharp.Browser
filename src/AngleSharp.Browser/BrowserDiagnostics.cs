@@ -6,6 +6,7 @@ using System.Linq;
 using System.Net;
 using AngleSharp.Io;
 using AngleSharp.Js;
+using AngleSharp.Renderer.Rendering;
 using Jint.Native.Object;
 using Jint.Runtime;
 
@@ -118,7 +119,15 @@ public enum FrameKind
 /// <param name="Kind">What it took to bring the frame up to date.</param>
 /// <param name="Layout">The time spent on the engine's thread, mostly in the layout.</param>
 /// <param name="Raster">The time spent rasterizing the frame to pixels.</param>
-public sealed record FrameTiming(DateTimeOffset Time, FrameKind Kind, TimeSpan Layout, TimeSpan Raster);
+public sealed record FrameTiming(DateTimeOffset Time, FrameKind Kind, TimeSpan Layout, TimeSpan Raster)
+{
+    /// <summary>
+    /// Gets what the layout took in detail: the time of each phase (styles, boxes, hit testing)
+    /// and how much work they did. A frame that was only moved to another scroll position, or
+    /// that stayed as it was, has <see cref="RenderMetrics.None"/>.
+    /// </summary>
+    public RenderMetrics Metrics { get; init; } = RenderMetrics.None;
+}
 
 /// <summary>
 /// Collects what happens while showing the current page: requests, errors, console output and

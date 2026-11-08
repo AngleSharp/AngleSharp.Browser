@@ -5,6 +5,10 @@
     <IsPackable>false</IsPackable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\vision.ico</ApplicationIcon>
+    <!-- a layout keeps a lot alive until it is done (styles, boxes), which the workstation GC copies
+         on one thread for every collection meanwhile: the server GC (whose heaps adapt to the
+         application's size) took GitHub's GC pauses from about 150 ms to 40 ms per frame -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>

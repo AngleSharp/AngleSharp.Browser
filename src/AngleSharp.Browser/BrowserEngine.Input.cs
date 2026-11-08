@@ -12,6 +12,7 @@ using AngleSharp.Html.Dom;
 using AngleSharp.Html.Dom.Events;
 using AngleSharp.Io;
 using AngleSharp.Js;
+using AngleSharp.Renderer;
 
 /// <summary>
 /// The cursor a host should display for the current pointer position.
@@ -949,6 +950,9 @@ partial class BrowserEngine
             {
                 (current as IHtmlElement)?.DoBlur();
             }
+
+            NotifyStateChanged(current);
+            NotifyStateChanged(focusable);
         }
 
         // what is clicked in a document has the keyboard go there
@@ -968,7 +972,22 @@ partial class BrowserEngine
             var next = current < 0
                 ? (direction > 0 ? 0 : candidates.Count - 1)
                 : (current + direction + candidates.Count) % candidates.Count;
+            var previous = document.ActiveElement;
             (candidates[next] as IHtmlElement)?.DoFocus();
+            NotifyStateChanged(previous);
+            NotifyStateChanged(candidates[next]);
+        }
+    }
+
+    /// <summary>
+    /// Tells the harness of the element's document that it looks different, though the DOM did
+    /// not change (e.g. it got the focus), which is shown with the next frame.
+    /// </summary>
+    private static void NotifyStateChanged(IElement? element)
+    {
+        if (element?.Owner?.Context is { } context && context.TryGetDomHarness(out var harness) && harness is not null)
+        {
+            harness.NotifyStateChanged(element);
         }
     }
 

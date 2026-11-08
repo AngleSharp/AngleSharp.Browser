@@ -790,15 +790,18 @@ public sealed partial class BrowserEngine : IDisposable
 
         if (Environment.TickCount64 < Volatile.Read(ref _animateUntil))
         {
-            Invalidate();
+            // the last frame is checked for changes, it is laid out anew only if it animates
+            Invalidate(isMutation: !_isLastFrameAnimating);
         }
     }
 
+    // the harness knows if the last frame can be brought up to date (see TryReuseLastFrame), or
+    // drops its layout if not (e.g. for a resource that arrived), which lays out the page
     private void OnPaintInvalidated(object? sender, EventArgs e)
     {
         if (!_isPainting)
         {
-            Invalidate();
+            Invalidate(isMutation: true);
         }
     }
 

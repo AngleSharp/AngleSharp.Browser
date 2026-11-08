@@ -115,10 +115,10 @@ foreach (var message in engine.Diagnostics.Messages)
 
 foreach (var frame in engine.Diagnostics.Frames)
 {
-    Console.WriteLine($"{frame.Kind}: layout {frame.Layout}, raster {frame.Raster}");
+    Console.WriteLine($"{frame.Kind}: layout {frame.Layout} (styles {frame.Metrics.Style}), raster {frame.Raster}");
 }
 ```
 
-Requests come with their `StartedAt` and `Duration` as well as their `RequestHeaders` and `ResponseHeaders`. Errors tell as much as is known about them: `ErrorType`, `Line`, `Column` and the `StackTrace` of the script (or of the .NET exception, if no script threw). `Source` names the script, if known; AngleSharp.Js does not report that yet. `Frames` has the timings of the latest painted frames (those made by `PrepareFrameAsync` and rasterized), where `Kind` tells if the document was laid out (`Layout`), the last frame was patched (`Update`) or just moved (`Reposition`).
+Requests come with their `StartedAt` and `Duration` as well as their `RequestHeaders` and `ResponseHeaders`. Errors tell as much as is known about them: `ErrorType`, `Line`, `Column` and the `StackTrace` of the script (or of the .NET exception, if no script threw). `Source` names the script, if known; AngleSharp.Js does not report that yet. `Frames` has the timings of the latest painted frames (those made by `PrepareFrameAsync` and rasterized), where `Kind` tells if the document was laid out (`Layout`), the last frame was patched (`Update`) or just moved (`Reposition`). The `Metrics` of a frame come from AngleSharp.Renderer and tell where the time of its layout went (`Setup`, `Style`, `Layout`, `HitTesting`, `Subframes`) and how much work that was (e.g., `Elements`, `Boxes`, `TrialLayouts`, `AllocatedBytes`); they are `RenderMetrics.None` for a frame that needed no layout.
 
 The `Changed` event tells when there is something new. `Clear()` removes what has been collected so far.

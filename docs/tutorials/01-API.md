@@ -84,7 +84,7 @@ All asynchronous methods take an optional `CancellationToken`.
 | --- | --- |
 | `Requests` | A list of `NetworkEntry`: `Method`, `Url`, `StartedAt`, `Duration`, `StatusCode`, `ContentType`, `ContentLength`, `RequestHeaders`, `ResponseHeaders`, `IsPending`. |
 | `Messages` | A list of `DiagnosticMessage`: `Kind` (`Console` or `Error`), `Time`, `Text`, and for errors `ErrorType`, `Source`, `Line`, `Column`, `StackTrace`. |
-| `Frames` | A list of `FrameTiming` for the latest painted frames: `Time`, `Kind` (`Layout`, `Update` or `Reposition`), `Layout`, `Raster`. |
+| `Frames` | A list of `FrameTiming` for the latest painted frames: `Time`, `Kind` (`Layout`, `Update` or `Reposition`), `Layout`, `Raster`, and the `Metrics` of the renderer (the time of each phase and how much work it did). |
 | `Changed` | Raised when something was added or cleared, on any thread. |
 | `Clear()` | Removes what has been collected. |
 

@@ -380,6 +380,90 @@ public class JavaScriptTests
         Assert.That(_engine.Url, Is.EqualTo(Address));
     }
 
+    [Test]
+    public async Task ModuleScriptInTheHeadRunsOnceTheDocumentIsParsed()
+    {
+        await _engine.LoadHtmlAsync("""
+            <head><script type=module>window.found = document.getElementById('app') !== null;</script></head>
+            <body><div id=app></div></body>
+            """, Address);
+
+        Assert.That(await _engine.EvaluateScriptAsync("window.found"), Is.True);
+    }
+
+    [Test]
+    public async Task ServiceWorkersCanBeRegistered()
+    {
+        await _engine.LoadHtmlAsync("""
+            <script>
+            window.state = 'pending';
+            navigator.serviceWorker.register('/sw.js').then(function (r) { window.state = r.scope; }, function (e) { window.state = 'failed: ' + e; });
+            </script>
+            """, Address);
+
+        var watch = Stopwatch.StartNew();
+
+        while ((string?)await _engine.EvaluateScriptAsync("window.state") == "pending" && watch.Elapsed < TimeSpan.FromSeconds(5))
+        {
+            await Task.Delay(20);
+        }
+
+        Assert.That(await _engine.EvaluateScriptAsync("window.state"), Is.EqualTo(Address));
+    }
+
+    [Test]
+    public async Task CssTransitionsTellScriptsWhenTheyEnd()
+    {
+        await _engine.LoadHtmlAsync("""
+            <style>#box { height: 20px; opacity: 0; transition: opacity 50ms } #box.on { opacity: 1 }</style>
+            <div id=box></div>
+            <script>
+            window.seen = [];
+            document.addEventListener('transitionend', function (e) { window.seen.push(e.type + ':' + e.propertyName + ':' + (e instanceof TransitionEvent)); });
+            </script>
+            """, Address);
+        await _engine.PrepareFrameAsync();
+        await _engine.EvaluateScriptAsync("document.getElementById('box').classList.add('on')");
+
+        var watch = Stopwatch.StartNew();
+
+        while (((string?)await _engine.EvaluateScriptAsync("window.seen.join()"))!.Length == 0 && watch.Elapsed < TimeSpan.FromSeconds(5))
+        {
+            await _engine.PrepareFrameAsync();
+            await Task.Delay(20);
+        }
+
+        Assert.That(await _engine.EvaluateScriptAsync("window.seen.join()"), Is.EqualTo("transitionend:opacity:true"));
+    }
+
+    [Test]
+    public async Task CssAnimationsTellScriptsWhenTheyStartAndEnd()
+    {
+        await _engine.LoadHtmlAsync("""
+            <style>@keyframes fade { from { opacity: 0 } to { opacity: 1 } } .run { animation: fade 50ms }</style>
+            <div id=box style="height:20px"></div>
+            <script>
+            window.seen = [];
+            for (const type of ['animationstart', 'animationend']) {
+                document.addEventListener(type, function (e) { window.seen.push(e.type + ':' + e.animationName); });
+            }
+            </script>
+            """, Address);
+        await _engine.PrepareFrameAsync();
+        await _engine.EvaluateScriptAsync("document.getElementById('box').classList.add('run')");
+
+        // like a view, frames are prepared as long as the engine asks for them
+        var watch = Stopwatch.StartNew();
+
+        while (!((string?)await _engine.EvaluateScriptAsync("window.seen.join()"))!.Contains("animationend") && watch.Elapsed < TimeSpan.FromSeconds(5))
+        {
+            await _engine.PrepareFrameAsync();
+            await Task.Delay(20);
+        }
+
+        Assert.That(await _engine.EvaluateScriptAsync("window.seen.join()"), Is.EqualTo("animationstart:fade,animationend:fade"));
+    }
+
     private static async Task<Exception?> CatchAsync(Func<Task> action)
     {
         try

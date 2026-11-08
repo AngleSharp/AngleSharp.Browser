@@ -429,6 +429,7 @@ public sealed class DiagnosticsPage : HtmlPage
         html.Append(Card("Median frame", FormatTime(totals.Order().ElementAt(totals.Length / 2)), false));
         html.Append(Card("Laid out / patched / moved", string.Join(" / ", Enum.GetValues<FrameKind>().Select(k => frames.Count(m => m.Kind == k))), false));
         html.Append("</div>");
+        html.Append(LayoutBreakdown(frames));
 
         // the panel is the viewport, so it tells how many frames fit
         var shown = frames.TakeLast(Math.Max(10, (Engine.ViewportWidth - 24) / FrameBarWidth)).ToArray();
@@ -443,18 +444,58 @@ public sealed class DiagnosticsPage : HtmlPage
         {
             var layout = Math.Max(frame.Layout.TotalMilliseconds / scale * PlotHeight, 1);
             var raster = Math.Max(frame.Raster.TotalMilliseconds / scale * PlotHeight, 1);
-            var tip = $"{frame.Time:HH:mm:ss.fff} · {frame.Kind} · layout {FormatTime(frame.Layout.TotalMilliseconds)}, raster {FormatTime(frame.Raster.TotalMilliseconds)}";
+            var tip = $"{frame.Time:HH:mm:ss.fff} · {frame.Kind} · layout {FormatTime(frame.Layout.TotalMilliseconds)}, raster {FormatTime(frame.Raster.TotalMilliseconds)}" +
+                (frame.Metrics.Total > TimeSpan.Zero ? $" · style {FormatTime(frame.Metrics.Style.TotalMilliseconds)}, boxes {FormatTime(frame.Metrics.Layout.TotalMilliseconds)}" : string.Empty);
             html.Append($"""<div class="frame"><div class="segment raster" style="height:{raster:0.#}px"></div><div class="segment layout" style="height:{layout:0.#}px"></div><span class="tip">{Encode(tip)}</span></div>""");
         }
 
         html.Append("</div>");
-        html.Append("""<h2 class="section">Slowest frames</h2><div class="frame-row head"><span>Time</span><span>Kind</span><span>Layout</span><span>Raster</span></div>""");
+        html.Append("""<h2 class="section">Slowest frames</h2><div class="frame-row head"><span>Time</span><span>Kind</span><span>Layout</span><span>Style</span><span>Boxes</span><span>Raster</span></div>""");
 
         foreach (var frame in frames.OrderByDescending(GetTotal).Take(SlowestFrames))
         {
-            html.Append($"""<div class="frame-row"><span>{frame.Time:HH:mm:ss.fff}</span><span>{frame.Kind}</span><span>{FormatTime(frame.Layout.TotalMilliseconds)}</span><span>{FormatTime(frame.Raster.TotalMilliseconds)}</span></div>""");
+            var metrics = frame.Metrics;
+            var hasMetrics = metrics.Total > TimeSpan.Zero;
+            html.Append($"""<div class="frame-row"><span>{frame.Time:HH:mm:ss.fff}</span><span>{frame.Kind}</span><span>{FormatTime(frame.Layout.TotalMilliseconds)}</span><span>{(hasMetrics ? FormatTime(metrics.Style.TotalMilliseconds) : "–")}</span><span>{(hasMetrics ? FormatTime(metrics.Layout.TotalMilliseconds) : "–")}</span><span>{FormatTime(frame.Raster.TotalMilliseconds)}</span></div>""");
         }
 
+        return html.ToString();
+    }
+
+    /// <summary>
+    /// Where the time of the latest layout went, and how much work it was, next to the averages
+    /// of the layouts so far (the frames that were only moved or patched do not tell much).
+    /// </summary>
+    private static string LayoutBreakdown(FrameTiming[] frames)
+    {
+        var laidOut = frames.Where(m => m.Kind == FrameKind.Layout && m.Metrics.Total > TimeSpan.Zero).ToArray();
+
+        if (laidOut.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var latest = laidOut[^1].Metrics;
+        var html = new StringBuilder();
+        html.Append("""<h2 class="section">Latest layout</h2><div class="cards">""");
+        html.Append(Card("Styles", FormatTime(latest.Style.TotalMilliseconds), false));
+        html.Append(Card("Boxes", FormatTime(latest.Layout.TotalMilliseconds), false));
+        html.Append(Card("Hit testing", FormatTime(latest.HitTesting.TotalMilliseconds), false));
+        html.Append(Card("Setup", FormatTime(latest.Setup.TotalMilliseconds), false));
+
+        if (latest.Subframes > TimeSpan.Zero)
+        {
+            html.Append(Card("Iframes", FormatTime(latest.Subframes.TotalMilliseconds), false));
+        }
+
+        html.Append(Card("Allocated", FormatSize(latest.AllocatedBytes), false));
+        html.Append("</div>");
+        html.Append("""<div class="facts">""");
+        html.Append(Fact("Elements", $"{latest.Elements} styled, {latest.Boxes} boxes, {latest.StyleMaps} style maps"));
+        html.Append(Fact("Measuring", $"{latest.TrialLayouts} trial layouts, {latest.TextMeasurements} text measurements"));
+        html.Append(Fact("Output", $"{latest.Commands} paint commands, {latest.HitTestEntries} hit-test boxes"));
+        html.Append(Fact("Average of " + laidOut.Length, $"styles {FormatTime(laidOut.Average(m => m.Metrics.Style.TotalMilliseconds))}, boxes {FormatTime(laidOut.Average(m => m.Metrics.Layout.TotalMilliseconds))}, hit testing {FormatTime(laidOut.Average(m => m.Metrics.HitTesting.TotalMilliseconds))}, setup {FormatTime(laidOut.Average(m => m.Metrics.Setup.TotalMilliseconds))}"));
+        html.Append("</div>");
         return html.ToString();
     }
 

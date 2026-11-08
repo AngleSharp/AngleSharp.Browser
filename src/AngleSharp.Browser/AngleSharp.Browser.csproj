@@ -12,13 +12,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="AngleSharp" Version="1.10.0" />
-    <PackageReference Include="AngleSharp.Js" Version="1.2.0" />
-    <PackageReference Include="AngleSharp.Css" Version="1.4.0" />
+    <PackageReference Include="AngleSharp" Version="1.10.1-beta.933" />
+    <PackageReference Include="AngleSharp.Js" Version="1.2.1-beta.228" />
+    <PackageReference Include="AngleSharp.Css" Version="1.4.1-beta.426" />
     <PackageReference Include="AngleSharp.Io" Version="1.3.0" />
     <PackageReference Include="AngleSharp.Wasm" Version="1.1.0" />
     <PackageReference Include="AngleSharp.Xml" Version="1.3.0" />
-    <PackageReference Include="AngleSharp.Renderer" Version="0.11.0" />
+    <PackageReference Include="AngleSharp.Renderer" Version="0.11.1-beta.139" />
   </ItemGroup>
 
   <ItemGroup>

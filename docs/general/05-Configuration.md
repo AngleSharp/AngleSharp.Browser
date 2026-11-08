@@ -54,6 +54,10 @@ var options = new BrowserOptions
 };
 ```
 
+Like a browser, the handler decompresses responses (gzip, deflate and brotli; `AutomaticDecompression`), which some servers send even if not asked to.
+
+Pages can register service workers (`navigator.serviceWorker`, through `ServiceWorkerPlatform`). The workers are installed and activated, but their scripts don't run, so every request goes to the network. Setting `io.ServiceWorkerPlatform` to `null` in `ConfigureIo` removes the API, and another platform can run the workers.
+
 `Configure` receives the AngleSharp configuration before the browsing context is created, so further services can be added:
 
 ```cs
