@@ -6,7 +6,6 @@ using AngleSharp.Browser.Avalonia;
 using Vision.Pages;
 using Vision.ViewModels;
 using Avalonia.Controls;
-using Avalonia.Platform;
 
 /// <summary>
 /// A window showing one of the browser's own HTML pages (settings, about), which it owns.
@@ -20,7 +19,7 @@ public sealed class PageWindow : Window
     {
         _page = page;
         _host = host;
-        Icon = new WindowIcon(AssetLoader.Open(new Uri("avares://Vision/Assets/avalonia-logo.ico")));
+        Icon = AppIcon.Default;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Content = new BrowserView { Engine = page.Engine };
         host.ColorSchemeChanged += OnColorSchemeChanged;

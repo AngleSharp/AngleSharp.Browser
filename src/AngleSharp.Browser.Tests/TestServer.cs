@@ -53,6 +53,13 @@ sealed class TestServer : IDisposable
             if (_resources.TryGetValue(context.Request.Url!.AbsolutePath, out var resource))
             {
                 response.ContentType = resource.Type;
+
+                // content kept compressed (like a CDN's) is sent as such, whether asked for or not
+                if (resource.Content is [0x1f, 0x8b, ..])
+                {
+                    response.AddHeader("Content-Encoding", "gzip");
+                }
+
                 await response.OutputStream.WriteAsync(resource.Content);
             }
             else

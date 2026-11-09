@@ -83,6 +83,31 @@ public partial class App : Application, IBrowserHost
         }
     }
 
+    public void OpenSiteInfo(BrowserEngine owner)
+    {
+        PageWindow? window = null;
+        var url = owner.Url;
+        var page = new CertificatePage(ColorScheme, url, owner.Certificate, () => window?.Close());
+        var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Host.Length > 0 ? uri.Host : "Site information";
+        window = new PageWindow(page, this)
+        {
+            Title = $"{host} - Vision",
+            Width = 640,
+            Height = 720,
+            MinWidth = 420,
+            MinHeight = 320,
+        };
+
+        if (_windows.FirstOrDefault(m => m.Engine == owner)?.Window is { } ownerWindow)
+        {
+            window.Show(ownerWindow);
+        }
+        else
+        {
+            window.Show();
+        }
+    }
+
     public void OpenAbout(BrowserEngine owner)
     {
         PageWindow? window = null;
@@ -206,6 +231,20 @@ public partial class App : Application, IBrowserHost
         };
         return window;
     }
+
+    private void OnAboutClicked(object? sender, EventArgs e)
+    {
+        if (GetActiveEntry() is { } entry)
+        {
+            OpenAbout(entry.Engine);
+        }
+    }
+
+    private void OnSettingsClicked(object? sender, EventArgs e) => OpenSettings();
+
+    private void OnNewWindowClicked(object? sender, EventArgs e) => OpenWindow(null, GetActiveEntry()?.Engine);
+
+    private BrowserWindow? GetActiveEntry() => _windows.FirstOrDefault(m => m.Window.IsActive) ?? _windows.FirstOrDefault();
 
     private MainWindow? GetActiveWindow() => _windows.FirstOrDefault(m => m.Window.IsActive)?.Window ?? _windows.FirstOrDefault()?.Window;
 

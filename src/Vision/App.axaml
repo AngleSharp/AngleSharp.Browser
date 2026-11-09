@@ -1,9 +1,20 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="Vision.App"
+             Name="Vision"
              xmlns:local="using:Vision"
              RequestedThemeVariant="Default">
              <!-- "Default" ThemeVariant follows system theme variant; the settings may pick "Dark" or "Light". -->
+
+    <!-- the application menu of macOS; Avalonia adds the usual items (hide, quit) after them -->
+    <NativeMenu.Menu>
+        <NativeMenu>
+            <NativeMenuItem Header="About Vision" Click="OnAboutClicked" />
+            <NativeMenuItemSeparator />
+            <NativeMenuItem Header="Settings…" Gesture="Cmd+OemComma" Click="OnSettingsClicked" />
+            <NativeMenuItem Header="New Window" Gesture="Cmd+N" Click="OnNewWindowClicked" />
+        </NativeMenu>
+    </NativeMenu.Menu>
 
     <Application.DataTemplates>
         <local:ViewLocator />
@@ -54,6 +65,7 @@
             <StreamGeometry x:Key="SecureIcon">M12,17C10.89,17 10,16.1 10,15C10,13.89 10.89,13 12,13A2,2 0 0,1 14,15A2,2 0 0,1 12,17M18,20V10H6V20H18M18,8A2,2 0 0,1 20,10V20A2,2 0 0,1 18,22H6C4.89,22 4,21.1 4,20V10C4,8.89 4.89,8 6,8H7V6A5,5 0 0,1 12,1A5,5 0 0,1 17,6V8H18M12,3A3,3 0 0,0 9,6V8H15V6A3,3 0 0,0 12,3Z</StreamGeometry>
             <StreamGeometry x:Key="InfoIcon">M11,9H13V7H11M12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M11,17H13V11H11V17Z</StreamGeometry>
             <StreamGeometry x:Key="DiagnosticsIcon">M3,13H5.79L10.1,4.79L11.28,13.75L14.5,9.66L17.83,13H21V15H17L14.67,12.67L9.92,18.73L8.94,11.31L7,15H3V13Z</StreamGeometry>
+            <StreamGeometry x:Key="InspectorIcon">M3,3H9V7H3V3M15,10H21V14H15V10M15,17H21V21H15V17M13,13H7V18H13V20H7L5,20V9H7V11H13V13Z</StreamGeometry>
             <StreamGeometry x:Key="SettingsIcon">M3,17V19H9V17H3M3,5V7H13V5H3M13,21V19H21V17H13V15H11V21H13M7,9V11H3V13H7V15H9V9H7M21,13V11H11V13H21M15,9H17V7H21V5H17V3H15V9Z</StreamGeometry>
             <StreamGeometry x:Key="NewWindowIcon">M19,19H5V5H12V3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V12H19V19M14,3V5H17.59L7.76,14.83L9.17,16.24L19,6.41V10H21V3H14Z</StreamGeometry>
         </ResourceDictionary>
@@ -61,6 +73,26 @@
 
     <Application.Styles>
         <FluentTheme />
+
+        <!-- a slow, faint glow behind a button, asking for a look at what is behind it -->
+        <Style Selector="Ellipse.attention">
+            <Setter Property="Opacity" Value="0" />
+        </Style>
+        <Style Selector="Ellipse.attention.pulsing">
+            <Style.Animations>
+                <Animation Duration="0:0:3" IterationCount="Infinite" Easing="SineEaseInOut">
+                    <KeyFrame Cue="0%">
+                        <Setter Property="Opacity" Value="0" />
+                    </KeyFrame>
+                    <KeyFrame Cue="50%">
+                        <Setter Property="Opacity" Value="0.18" />
+                    </KeyFrame>
+                    <KeyFrame Cue="100%">
+                        <Setter Property="Opacity" Value="0" />
+                    </KeyFrame>
+                </Animation>
+            </Style.Animations>
+        </Style>
 
         <!-- round, borderless toolbar buttons -->
         <Style Selector="Button.icon">
@@ -90,6 +122,18 @@
         </Style>
         <Style Selector="Button.icon:disabled PathIcon">
             <Setter Property="Opacity" Value="0.35" />
+        </Style>
+
+        <!-- the site information button inside of the address bar -->
+        <Style Selector="Button.icon.site">
+            <Setter Property="Width" Value="28" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="CornerRadius" Value="14" />
+        </Style>
+        <Style Selector="Button.icon.site PathIcon">
+            <Setter Property="Width" Value="14" />
+            <Setter Property="Height" Value="14" />
+            <Setter Property="Foreground" Value="{DynamicResource ChromeMutedTextBrush}" />
         </Style>
 
         <!-- the address bar: a pill, which lights up while typing -->

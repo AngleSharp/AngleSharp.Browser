@@ -72,13 +72,44 @@ dotnet run --project src/Vision -- https://example.org
 
 Cookies, web storage and the HTTP cache are persisted in a profile directory (by default in the local application data folder). Use `--profile <directory>` to pick another one or `--in-memory` to persist nothing.
 
-The diagnostics show what a page did; they are HTML and CSS rendered by a second `BrowserView`, like the rest of Vision's own UI:
+The diagnostics (F12) show what a page did: errors with their stack traces, the console output, a waterfall of the requests and the timings of the rendering. They are HTML and CSS rendered by a second `BrowserView`, like the rest of Vision's own UI:
 
-![Vision showing Wikipedia with the diagnostics panel](https://raw.githubusercontent.com/AngleSharp/AngleSharp.Browser/main/docs/screenshots/diagnostics.png)
+![Vision showing Wikipedia with the requests in the diagnostics panel](https://raw.githubusercontent.com/AngleSharp/AngleSharp.Browser/main/docs/screenshots/diagnostics.png)
+
+The inspector (Ctrl+Shift+I) opens in the same place and shows the page as AngleSharp sees it right now: its DOM, its CSSOM and its render tree, with the matched rules, computed style and box of any element:
+
+![Vision showing GitHub with the DOM in the inspector panel](https://raw.githubusercontent.com/AngleSharp/AngleSharp.Browser/main/docs/screenshots/inspector.png)
 
 | Settings | About |
 | --- | --- |
 | ![The settings of Vision](https://raw.githubusercontent.com/AngleSharp/AngleSharp.Browser/main/docs/screenshots/settings.png) | ![The about window of Vision in dark mode](https://raw.githubusercontent.com/AngleSharp/AngleSharp.Browser/main/docs/screenshots/about.png) |
+
+## Help Us Render the Web
+
+Every page that looks wrong points at something we can improve, and Vision is the easiest way to find those pages. Run it with a website you care about:
+
+```bash
+dotnet run --project src/Vision -- https://your-favorite-website.example
+```
+
+If the page does not render correctly, then please do one of the following:
+
+1. **Report it.** [Open an issue](https://github.com/AngleSharp/AngleSharp.Browser/issues/new/choose) with the address, a screenshot, and what you expected to see.
+2. **Even better, fix it.** Point your coding agent at the page and let it find the cause, then send a pull request to the project responsible.
+
+The diagnostics (F12) show the page's failed requests, errors and console output, and the inspector (Ctrl+Shift+I) shows the DOM, CSSOM and render tree AngleSharp ended up with, which is a good place to start. The fix may belong to any part of the ecosystem:
+
+| Project | Responsible for |
+| --- | --- |
+| [AngleSharp](https://github.com/AngleSharp/AngleSharp) | HTML parsing and the DOM |
+| [AngleSharp.Css](https://github.com/AngleSharp/AngleSharp.Css) | CSS parsing, the cascade and computed styles |
+| [AngleSharp.Xml](https://github.com/AngleSharp/AngleSharp.Xml) | XML parsing and validation |
+| [AngleSharp.Renderer](https://github.com/AngleSharp/AngleSharp.Renderer) | Layout and painting |
+| [AngleSharp.Js](https://github.com/AngleSharp/AngleSharp.Js) | Running scripts and exposing the DOM to them |
+| [AngleSharp.Io](https://github.com/AngleSharp/AngleSharp.Io) | Requests and other I/O |
+| [AngleSharp.Browser](https://github.com/AngleSharp/AngleSharp.Browser) | Navigation, input, scrolling and Vision itself |
+
+Not sure which one it is? Open the issue here and we will help to find out. A small reproduction and a test make a pull request much easier to review, whoever (or whatever) wrote it. See the [contributing guide](.github/CONTRIBUTING.md) for the details.
 
 ## .NET Foundation
 

@@ -25,6 +25,29 @@ static class FormControls
         _ => false,
     };
 
+    /// <summary>
+    /// The control of a label: the one its `for` attribute names, else its first labelable
+    /// descendant (HTML 4.10.4). AngleSharp only knows the former so far.
+    /// </summary>
+    public static IElement? GetLabeledControl(IHtmlLabelElement label)
+    {
+        if (label.Control is { } control)
+        {
+            return control;
+        }
+
+        return label.HasAttribute("for")
+            ? null
+            : label.Descendants<IElement>().FirstOrDefault(IsLabelable);
+    }
+
+    private static bool IsLabelable(IElement element) => element switch
+    {
+        IHtmlInputElement input => !input.Type.Equals("hidden", StringComparison.OrdinalIgnoreCase),
+        IHtmlButtonElement or IHtmlSelectElement or IHtmlTextAreaElement or IHtmlMeterElement or IHtmlOutputElement or IHtmlProgressElement => true,
+        _ => false,
+    };
+
     public static bool IsToggle(IElement? element) =>
         element is IHtmlInputElement input && (input.Type.Equals("checkbox", StringComparison.OrdinalIgnoreCase) || input.Type.Equals("radio", StringComparison.OrdinalIgnoreCase));
 
@@ -82,22 +105,28 @@ static class FormControls
         }
     }
 
-    public static bool StepSelection(IHtmlSelectElement select, int delta)
+    /// <summary>
+    /// If an option can be chosen: neither it nor its option group is disabled.
+    /// </summary>
+    public static bool IsSelectableOption(IElement? element) =>
+        element is IHtmlOptionElement option && !option.HasAttribute("disabled") &&
+        option.ParentElement is not IHtmlOptionsGroupElement { IsDisabled: true };
+
+    /// <summary>
+    /// Makes the given options the selected ones of a select.
+    /// </summary>
+    /// <returns>True if that changed what is selected.</returns>
+    public static bool SetSelectedOptions(IHtmlSelectElement select, IReadOnlyCollection<IElement> selected)
     {
-        var options = select.Options;
-        var index = Math.Clamp(select.SelectedIndex + delta, 0, options.Length - 1);
+        var hasChanged = false;
 
-        if (options.Length == 0 || index == select.SelectedIndex)
+        foreach (var option in select.Options.OfType<IHtmlOptionElement>())
         {
-            return false;
-        }
+            var isSelected = selected.Contains(option);
+            hasChanged |= isSelected != option.IsSelected;
+            option.IsSelected = isSelected;
 
-        for (var i = 0; i < options.Length; i++)
-        {
-            var option = options[i]!;
-            option.IsSelected = i == index;
-
-            if (i == index)
+            if (isSelected)
             {
                 option.SetAttribute("selected", string.Empty);
             }
@@ -107,7 +136,18 @@ static class FormControls
             }
         }
 
-        return true;
+        return hasChanged;
+    }
+
+    /// <summary>
+    /// The selectable options from one option to another, in either direction.
+    /// </summary>
+    public static List<IElement> GetOptionRange(IHtmlSelectElement select, IElement from, IElement to)
+    {
+        var options = select.Options.OfType<IElement>().ToList();
+        var start = options.IndexOf(from);
+        var end = options.IndexOf(to);
+        return options.Skip(Math.Min(start, end)).Take(Math.Abs(end - start) + 1).Where(IsSelectableOption).ToList();
     }
 
     private static void SyncCheckedAttribute(IHtmlInputElement input, bool value)

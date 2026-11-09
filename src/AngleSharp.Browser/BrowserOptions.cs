@@ -2,8 +2,10 @@ namespace AngleSharp.Browser;
 
 using System;
 using System.Collections.Generic;
+using System.Net;
 using AngleSharp.Io;
 using AngleSharp.Io.Dom;
+using AngleSharp.Io.ServiceWorkerApi;
 
 /// <summary>
 /// Options for creating a <see cref="BrowserEngine"/>. Everything that
@@ -104,6 +106,13 @@ public sealed class BrowserOptions
             : IoOptions.CreatePersistent(ProfileDirectory);
 
         options.ClipboardPlatform = ClipboardPlatform;
+
+        // pages register workers once they see navigator.serviceWorker (and fail on a null one);
+        // the workers are installed and activated, but don't run, so requests go to the network
+        options.ServiceWorkerPlatform = new ServiceWorkerPlatform();
+
+        // like any browser: servers (e.g. CDNs keeping files compressed) may send gzip unasked
+        options.HttpHandler.AutomaticDecompression = DecompressionMethods.All;
 
         if (UserAgent is not null)
         {

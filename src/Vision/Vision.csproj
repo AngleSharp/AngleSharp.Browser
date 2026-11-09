@@ -4,7 +4,21 @@
     <TargetFramework>net10.0</TargetFramework>
     <IsPackable>false</IsPackable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\vision.ico</ApplicationIcon>
+    <!-- a layout keeps a lot alive until it is done (styles, boxes), which the workstation GC copies
+         on one thread for every collection meanwhile: the server GC (whose heaps adapt to the
+         application's size) took GitHub's GC pauses from about 150 ms to 40 ms per frame -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <!-- a published app starts from precompiled code, which needs a runtime identifier (publish -r) -->
+    <PublishReadyToRun Condition="'$(RuntimeIdentifier)' != ''">true</PublishReadyToRun>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- the runtime waits for 100 ms without new code before it starts to optimize what is called
+         often, which a page being loaded and laid out for the first time never gives it: without
+         the wait GitHub's first two frames took 900 ms each instead of 1200 and 1500 ms -->
+    <RuntimeHostConfigurationOption Include="System.Runtime.TieredCompilation.CallCountingDelayMs" Value="0" />
+  </ItemGroup>
 
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />

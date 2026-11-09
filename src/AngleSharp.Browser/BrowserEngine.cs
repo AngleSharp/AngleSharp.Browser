@@ -71,6 +71,7 @@ public sealed partial class BrowserEngine : IDisposable
     private readonly Timer _heartbeat;
     private MutationObserver? _observer;
     private IDocument? _document;
+    private IEventLoop? _eventLoop;
     private string _title = string.Empty;
     private PendingNavigation? _pendingNavigation;
     private int _navigationId;
@@ -79,6 +80,7 @@ public sealed partial class BrowserEngine : IDisposable
     private int _loadCount;
     private int _layoutVersion;
     private int _scrollExtentVersion = -1;
+    private Exception? _lastError;
     private double _maxScrollTop;
     private bool _wasReadyForLayout;
     private volatile bool _isPainting;
@@ -117,9 +119,18 @@ public sealed partial class BrowserEngine : IDisposable
         var ioOptions = options.CreateIoOptions(opener?._ioOptions);
         // every engine of a profile has to see the same cookies, not its own copy of the file
         _ioOptions = ioOptions;
+
+        // the site information shows the certificate of the connection (unless the host verifies certificates itself)
+        if (ioOptions.HttpHandler is { ServerCertificateCustomValidationCallback: null } handler)
+        {
+            TrackCertificates(handler, _certificates);
+        }
+
         _cookies = opener?._cookies ?? new SynchronizedCookieProvider(new AdvancedCookieProvider(ioOptions.CookieHandler));
         var config = Configuration.Default
-            .WithEventLoop()
+            // one loop for the page and its iframes: scripts of all of them run on it, and the
+            // layout of the page holds it, as the DOM of an iframe is part of what it lays out
+            .WithEventLoop(context => _eventLoop is null ? _eventLoop = new JsEventLoop(context) : new FrameEventLoop(_eventLoop))
             .WithRenderDevice(_device)
             .WithXml()
             .WithCss()
@@ -190,6 +201,18 @@ public sealed partial class BrowserEngine : IDisposable
                     if (ev is AngleSharp.Html.Dom.Events.HtmlParseEvent { Document: { } document })
                     {
                         scripting.EvaluateScript(document, TimerClampScript, "text/javascript", "about:blank");
+                        // AngleSharp.Js reports an event listener throwing on the window alone, with an
+                        // ErrorEvent that only has the type "error" from AngleSharp 1.10 or
+                        // AngleSharp.Js 1.2 (the listener of no type goes away once they are referenced)
+                        DomEventHandler onError = (_, error) =>
+                        {
+                            if (error is ErrorEvent { Error: { } exception })
+                            {
+                                OnError(exception);
+                            }
+                        };
+                        document.DefaultView?.AddEventListener("error", onError);
+                        document.DefaultView?.AddEventListener(null!, onError);
                     }
                 };
             }
@@ -598,6 +621,7 @@ public sealed partial class BrowserEngine : IDisposable
         {
             await RunExclusiveAsync(() =>
             {
+                NavigationHistory.SetDocumentUrl(entry);
                 _document?.DefaultView?.Dispatch(new PopStateEvent(entry.State));
                 OnStateChanged();
             }, cancellationToken).ConfigureAwait(false);
@@ -657,6 +681,8 @@ public sealed partial class BrowserEngine : IDisposable
             _document = active;
             _hovered = null;
             _pressed = null;
+            _focusedFrameDocument = null;
+            _hoveredFrames.Clear();
             _pointerFrame = null;
             _wasReadyForLayout = false;
             ResetScrollPosition();
@@ -678,6 +704,8 @@ public sealed partial class BrowserEngine : IDisposable
             _title = active.Title ?? string.Empty;
             OnStateChanged();
         }
+
+        SyncIcon(active);
 
         // a document still being parsed may not have a root to observe yet
         if (_observer is null && active?.DocumentElement is IElement root)
@@ -762,15 +790,18 @@ public sealed partial class BrowserEngine : IDisposable
 
         if (Environment.TickCount64 < Volatile.Read(ref _animateUntil))
         {
-            Invalidate();
+            // the last frame is checked for changes, it is laid out anew only if it animates
+            Invalidate(isMutation: !_isLastFrameAnimating);
         }
     }
 
+    // the harness knows if the last frame can be brought up to date (see TryReuseLastFrame), or
+    // drops its layout if not (e.g. for a resource that arrived), which lays out the page
     private void OnPaintInvalidated(object? sender, EventArgs e)
     {
         if (!_isPainting)
         {
-            Invalidate();
+            Invalidate(isMutation: true);
         }
     }
 
@@ -821,7 +852,13 @@ public sealed partial class BrowserEngine : IDisposable
 
     private void OnError(Exception ex)
     {
-        _diagnostics.OnMessage(DiagnosticKind.Error, ex.Message);
+        // AngleSharp.Js 1.2 tells the window as well as the context of the same error
+        if (ReferenceEquals(Interlocked.Exchange(ref _lastError, ex), ex))
+        {
+            return;
+        }
+
+        _diagnostics.OnError(ex);
         Error?.Invoke(this, ex);
     }
 

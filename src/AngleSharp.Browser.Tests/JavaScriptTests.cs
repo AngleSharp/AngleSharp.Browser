@@ -223,6 +223,110 @@ public class JavaScriptTests
     }
 
     [Test]
+    public async Task PointerEventsComeBeforeTheMouseEvents()
+    {
+        await _engine.LoadHtmlAsync("""
+            <button id=b style="position:absolute;left:10px;top:10px;width:100px;height:40px">x</button>
+            <script>
+            window.seen = [];
+            for (const type of ['pointerover', 'mouseover', 'pointermove', 'mousemove', 'pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+                document.getElementById('b').addEventListener(type, function (e) { window.seen.push(type + ':' + e.clientX); });
+            }
+            </script>
+            """, Address);
+        await _engine.PrepareFrameAsync();
+
+        await _engine.MovePointerAsync(20, 20);
+        await _engine.MovePointerAsync(21, 20);
+        await _engine.ClickAsync(21, 20);
+
+        var seen = (string)(await _engine.EvaluateScriptAsync("window.seen.join()"))!;
+
+        Assert.That(seen, Does.Contain("pointerover:20,mouseover:20"));
+        Assert.That(seen, Does.Contain("pointermove:21,mousemove:21"));
+        Assert.That(seen, Does.EndWith("pointerdown:21,mousedown:21,pointerup:21,mouseup:21,click:21"));
+    }
+
+    [Test]
+    public async Task KeysTellTheirLegacyNamesAndCode()
+    {
+        await _engine.LoadHtmlAsync("""
+            <input id=i autofocus>
+            <script>
+            window.seen = [];
+            document.addEventListener('keydown', function (e) { window.seen.push(e.key + ':' + e.code + ':' + e.which + ':' + e.keyCode); });
+            document.getElementById('i').focus();
+            </script>
+            """, Address);
+
+        await _engine.KeyDownAsync("Enter");
+        await _engine.KeyDownAsync("a");
+
+        Assert.That(await _engine.EvaluateScriptAsync("window.seen.join()"), Is.EqualTo("Enter:Enter:13:13,a:KeyA:65:65"));
+    }
+
+    [Test]
+    public async Task PushStateChangesTheAddressOfTheDocument()
+    {
+        await _engine.LoadHtmlAsync("<a id=l href=rel>x</a>", "https://example.org/a/first?q=1#h");
+
+        var pushed = await _engine.EvaluateScriptAsync(@"
+            history.pushState(null, '', '/b/second?x=2#y');
+            [location.pathname, location.search, location.hash, location.href, document.URL, document.documentURI, document.getElementById('l').href].join(' ')");
+
+        Assert.That(pushed, Is.EqualTo("/b/second ?x=2 #y https://example.org/b/second?x=2#y https://example.org/b/second?x=2#y https://example.org/b/second?x=2#y https://example.org/b/rel"));
+        Assert.That(_engine.Url, Is.EqualTo("https://example.org/b/second?x=2#y"));
+    }
+
+    [Test]
+    public async Task ReplaceStateChangesTheAddressOfTheDocument()
+    {
+        await _engine.LoadHtmlAsync("<p></p>", "https://example.org/first");
+
+        var replaced = await _engine.EvaluateScriptAsync("history.replaceState(null, '', 'other'); location.href");
+
+        Assert.That(replaced, Is.EqualTo("https://example.org/other"));
+    }
+
+    [Test]
+    public async Task ChangingTheAddressByScriptDoesNotNavigate()
+    {
+        await _engine.LoadHtmlAsync("<p></p>", "https://example.org/first");
+
+        var marker = await _engine.EvaluateScriptAsync("window.marker = 'same'; history.pushState(null, '', '/second'); window.marker");
+        await _engine.PrepareFrameAsync();
+
+        Assert.That(marker, Is.EqualTo("same"));
+        Assert.That(await _engine.EvaluateScriptAsync("window.marker"), Is.EqualTo("same"));
+    }
+
+    [Test]
+    public async Task GoingBackRestoresTheAddressBeforePopState()
+    {
+        await _engine.LoadHtmlAsync("<p></p>", "https://example.org/first");
+        await _engine.EvaluateScriptAsync(@"
+            window.seen = [];
+            window.addEventListener('popstate', function () { window.seen.push(location.pathname); });
+            history.pushState(null, '', '/second');");
+
+        await _engine.GoBackAsync();
+        Assert.That(await _engine.EvaluateScriptAsync("location.pathname"), Is.EqualTo("/first"));
+
+        await _engine.GoForwardAsync();
+        Assert.That(await _engine.EvaluateScriptAsync("location.pathname + ' ' + window.seen.join()"), Is.EqualTo("/second /first,/second"));
+    }
+
+    [Test]
+    public async Task AddressOfAnotherOriginStaysRefusedAndUnchanged()
+    {
+        await _engine.LoadHtmlAsync("<p></p>", "https://example.org/first");
+
+        var refused = await _engine.EvaluateScriptAsync("try { history.pushState(null, '', 'https://other.example/x'); 'allowed'; } catch (e) { 'refused ' + location.href; }");
+
+        Assert.That(refused, Is.EqualTo("refused https://example.org/first"));
+    }
+
+    [Test]
     public async Task PushStateChangesTheAddressAndGoingBackPopsTheState()
     {
         await _engine.LoadHtmlAsync("""
@@ -274,6 +378,90 @@ public class JavaScriptTests
 
         Assert.That(await CatchAsync(() => _engine.EvaluateScriptAsync("history.pushState(null, '', 'https://other.example/')")), Is.Not.Null);
         Assert.That(_engine.Url, Is.EqualTo(Address));
+    }
+
+    [Test]
+    public async Task ModuleScriptInTheHeadRunsOnceTheDocumentIsParsed()
+    {
+        await _engine.LoadHtmlAsync("""
+            <head><script type=module>window.found = document.getElementById('app') !== null;</script></head>
+            <body><div id=app></div></body>
+            """, Address);
+
+        Assert.That(await _engine.EvaluateScriptAsync("window.found"), Is.True);
+    }
+
+    [Test]
+    public async Task ServiceWorkersCanBeRegistered()
+    {
+        await _engine.LoadHtmlAsync("""
+            <script>
+            window.state = 'pending';
+            navigator.serviceWorker.register('/sw.js').then(function (r) { window.state = r.scope; }, function (e) { window.state = 'failed: ' + e; });
+            </script>
+            """, Address);
+
+        var watch = Stopwatch.StartNew();
+
+        while ((string?)await _engine.EvaluateScriptAsync("window.state") == "pending" && watch.Elapsed < TimeSpan.FromSeconds(5))
+        {
+            await Task.Delay(20);
+        }
+
+        Assert.That(await _engine.EvaluateScriptAsync("window.state"), Is.EqualTo(Address));
+    }
+
+    [Test]
+    public async Task CssTransitionsTellScriptsWhenTheyEnd()
+    {
+        await _engine.LoadHtmlAsync("""
+            <style>#box { height: 20px; opacity: 0; transition: opacity 50ms } #box.on { opacity: 1 }</style>
+            <div id=box></div>
+            <script>
+            window.seen = [];
+            document.addEventListener('transitionend', function (e) { window.seen.push(e.type + ':' + e.propertyName + ':' + (e instanceof TransitionEvent)); });
+            </script>
+            """, Address);
+        await _engine.PrepareFrameAsync();
+        await _engine.EvaluateScriptAsync("document.getElementById('box').classList.add('on')");
+
+        var watch = Stopwatch.StartNew();
+
+        while (((string?)await _engine.EvaluateScriptAsync("window.seen.join()"))!.Length == 0 && watch.Elapsed < TimeSpan.FromSeconds(5))
+        {
+            await _engine.PrepareFrameAsync();
+            await Task.Delay(20);
+        }
+
+        Assert.That(await _engine.EvaluateScriptAsync("window.seen.join()"), Is.EqualTo("transitionend:opacity:true"));
+    }
+
+    [Test]
+    public async Task CssAnimationsTellScriptsWhenTheyStartAndEnd()
+    {
+        await _engine.LoadHtmlAsync("""
+            <style>@keyframes fade { from { opacity: 0 } to { opacity: 1 } } .run { animation: fade 50ms }</style>
+            <div id=box style="height:20px"></div>
+            <script>
+            window.seen = [];
+            for (const type of ['animationstart', 'animationend']) {
+                document.addEventListener(type, function (e) { window.seen.push(e.type + ':' + e.animationName); });
+            }
+            </script>
+            """, Address);
+        await _engine.PrepareFrameAsync();
+        await _engine.EvaluateScriptAsync("document.getElementById('box').classList.add('run')");
+
+        // like a view, frames are prepared as long as the engine asks for them
+        var watch = Stopwatch.StartNew();
+
+        while (!((string?)await _engine.EvaluateScriptAsync("window.seen.join()"))!.Contains("animationend") && watch.Elapsed < TimeSpan.FromSeconds(5))
+        {
+            await _engine.PrepareFrameAsync();
+            await Task.Delay(20);
+        }
+
+        Assert.That(await _engine.EvaluateScriptAsync("window.seen.join()"), Is.EqualTo("animationstart:fade,animationend:fade"));
     }
 
     private static async Task<Exception?> CatchAsync(Func<Task> action)

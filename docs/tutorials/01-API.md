@@ -21,7 +21,7 @@ The following APIs cover most day-to-day tasks:
 - `ClickAsync`, `TextInputAsync`, `KeyDownAsync`, `ScrollAsync`
 : Interacts with the page like a user.
 - `Diagnostics`
-: Lists the requests, errors and console output of the page.
+: Lists the requests, errors, console output and frame timings of the page.
 - `BrowserView`
 : Displays an engine in Avalonia.
 
@@ -33,6 +33,7 @@ The following APIs cover most day-to-day tasks:
 | --- | --- |
 | `Url`, `Title` | The address (including one being loaded) and the title. |
 | `IsLoading` | If a navigation is ongoing. |
+| `IconUrl`, `IconUrls`, `Certificate` | The page's icon and the `ServerCertificate` of its connection. See [Site Information](../general/02-Engine.md#site-information). |
 | `CanGoBack`, `CanGoForward` | The state of the history. |
 | `Document`, `Context` | The current `IDocument` (use it within `InvokeAsync`) and the `IBrowsingContext`. |
 | `ViewportWidth`, `ViewportHeight` | The size of the viewport in CSS pixels. |
@@ -59,6 +60,7 @@ The following APIs cover most day-to-day tasks:
 | `KeyDownAsync`, `KeyUpAsync`, `TextInputAsync` | Keyboard input. |
 | `ScrollAsync(deltaX, deltaY)`, `ScrollToAsync(top, animate)` | Scrolling. |
 | `CreateWindow()`, `CreateWindow(options)` | Creates an engine sharing the profile. |
+| `LoadIconAsync()`, `GetCertificate(host)` | Loads the page's icon, or gets the certificate of a host. |
 
 All asynchronous methods take an optional `CancellationToken`.
 
@@ -80,8 +82,9 @@ All asynchronous methods take an optional `CancellationToken`.
 
 | Member | Description |
 | --- | --- |
-| `Requests` | A list of `NetworkEntry`: `Method`, `Url`, `StartedAt`, `Duration`, `StatusCode`, `ContentType`, `ContentLength`, `IsPending`. |
-| `Messages` | A list of `DiagnosticMessage`: `Kind` (`Console` or `Error`), `Time`, `Text`. |
+| `Requests` | A list of `NetworkEntry`: `Method`, `Url`, `StartedAt`, `Duration`, `StatusCode`, `ContentType`, `ContentLength`, `RequestHeaders`, `ResponseHeaders`, `IsPending`. |
+| `Messages` | A list of `DiagnosticMessage`: `Kind` (`Console` or `Error`), `Time`, `Text`, and for errors `ErrorType`, `Source`, `Line`, `Column`, `StackTrace`. |
+| `Frames` | A list of `FrameTiming` for the latest painted frames: `Time`, `Kind` (`Layout`, `Update` or `Reposition`), `Layout`, `Raster`, and the `Metrics` of the renderer (the time of each phase and how much work it did). |
 | `Changed` | Raised when something was added or cleared, on any thread. |
 | `Clear()` | Removes what has been collected. |
 

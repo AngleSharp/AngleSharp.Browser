@@ -1,6 +1,7 @@
 namespace AngleSharp.Browser;
 
 using System;
+using System.Diagnostics;
 using AngleSharp.Renderer.Rendering;
 
 /// <summary>
@@ -10,9 +11,9 @@ using AngleSharp.Renderer.Rendering;
 public sealed class BrowserFrame
 {
     private readonly RenderedFrame _frame;
-    private readonly Action _painted;
+    private readonly Action<TimeSpan> _painted;
 
-    internal BrowserFrame(RenderedFrame frame, Action painted)
+    internal BrowserFrame(RenderedFrame frame, Action<TimeSpan> painted)
     {
         _frame = frame;
         _painted = painted;
@@ -51,8 +52,9 @@ public sealed class BrowserFrame
     /// <returns>The premultiplied RGBA pixels of the frame.</returns>
     public RenderedPixels Rasterize()
     {
+        var start = Stopwatch.GetTimestamp();
         var pixels = _frame.Rasterize();
-        _painted();
+        _painted(Stopwatch.GetElapsedTime(start));
         return pixels;
     }
 }

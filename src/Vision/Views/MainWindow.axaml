@@ -7,7 +7,6 @@
         mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
         x:Class="Vision.Views.MainWindow"
         x:DataType="vm:MainViewModel"
-        Icon="/Assets/avalonia-logo.ico"
         Title="{Binding WindowTitle}"
         Width="1200"
         Height="800"
@@ -21,6 +20,7 @@
         <KeyBinding Gesture="Ctrl+R" Command="{Binding ReloadCommand}" />
         <KeyBinding Gesture="Ctrl+N" Command="{Binding NewWindowCommand}" />
         <KeyBinding Gesture="F12" Command="{Binding ToggleDiagnosticsCommand}" />
+        <KeyBinding Gesture="Ctrl+Shift+I" Command="{Binding ToggleInspectorCommand}" />
     </Window.KeyBindings>
 
     <Grid RowDefinitions="Auto,*">
@@ -51,26 +51,30 @@
                 </Button>
 
                 <Border Grid.Column="3" Classes="omnibox" Margin="6,0">
-                    <Grid ColumnDefinitions="Auto,*">
-                        <Panel Grid.Column="0"
-                               Margin="12,0,10,0"
-                               Background="Transparent"
-                               ToolTip.Tip="{Binding SiteInfo}">
-                            <PathIcon Width="14"
-                                      Height="14"
-                                      Foreground="{DynamicResource ChromeMutedTextBrush}"
-                                      Data="{StaticResource SecureIcon}"
-                                      IsVisible="{Binding IsSecure}" />
-                            <PathIcon Width="14"
-                                      Height="14"
-                                      Foreground="{DynamicResource ChromeMutedTextBrush}"
-                                      Data="{StaticResource InfoIcon}"
-                                      IsVisible="{Binding !IsSecure}" />
-                        </Panel>
-                        <TextBox Grid.Column="1"
+                    <Grid ColumnDefinitions="Auto,Auto,*">
+                        <!-- the site information: how the connection is secured -->
+                        <Button Grid.Column="0"
+                                Classes="icon site"
+                                Margin="4,0,2,0"
+                                ToolTip.Tip="{Binding SiteInfo}"
+                                Command="{Binding OpenSiteInfoCommand}">
+                            <Panel>
+                                <PathIcon Data="{StaticResource SecureIcon}" IsVisible="{Binding IsSecure}" />
+                                <PathIcon Data="{StaticResource InfoIcon}" IsVisible="{Binding !IsSecure}" />
+                            </Panel>
+                        </Button>
+                        <Image Grid.Column="1"
+                               Width="16"
+                               Height="16"
+                               Margin="2,0,8,0"
+                               VerticalAlignment="Center"
+                               RenderOptions.BitmapInterpolationMode="HighQuality"
+                               Source="{Binding PageIcon}"
+                               IsVisible="{Binding HasPageIcon}" />
+                        <TextBox Grid.Column="2"
                                  x:Name="AddressBox"
                                  Classes="bare"
-                                 Margin="0,0,14,0"
+                                 Margin="4,0,14,0"
                                  PlaceholderText="Search or type a web address"
                                  Text="{Binding Address}">
                             <TextBox.KeyBindings>
@@ -81,6 +85,13 @@
                 </Border>
 
                 <Panel Grid.Column="4">
+                    <!-- the page reported errors, which the diagnostics show -->
+                    <Ellipse Classes="attention"
+                             Classes.pulsing="{Binding NeedsAttention}"
+                             Width="34"
+                             Height="34"
+                             IsHitTestVisible="False"
+                             Fill="{DynamicResource ChromeAlertBrush}" />
                     <Button Classes="icon" ToolTip.Tip="Customize and control Vision">
                         <PathIcon Data="{StaticResource MoreIcon}" />
                         <Button.Flyout>
@@ -100,6 +111,15 @@
                                         <PathIcon Data="{StaticResource DiagnosticsIcon}" />
                                     </MenuItem.Icon>
                                 </MenuItem>
+                                <MenuItem Header="Inspector"
+                                          InputGesture="Ctrl+Shift+I"
+                                          ToggleType="CheckBox"
+                                          IsChecked="{Binding IsInspectorOpen, Mode=OneWay}"
+                                          Command="{Binding ToggleInspectorCommand}">
+                                    <MenuItem.Icon>
+                                        <PathIcon Data="{StaticResource InspectorIcon}" />
+                                    </MenuItem.Icon>
+                                </MenuItem>
                                 <MenuItem Header="Settings" Command="{Binding OpenSettingsCommand}">
                                     <MenuItem.Icon>
                                         <PathIcon Data="{StaticResource SettingsIcon}" />
@@ -113,15 +133,6 @@
                             </MenuFlyout>
                         </Button.Flyout>
                     </Button>
-                    <!-- the page reported errors, which the diagnostics show -->
-                    <Ellipse Width="8"
-                             Height="8"
-                             Margin="0,5,5,0"
-                             HorizontalAlignment="Right"
-                             VerticalAlignment="Top"
-                             IsHitTestVisible="False"
-                             Fill="{DynamicResource ChromeAlertBrush}"
-                             IsVisible="{Binding HasErrors}" />
                 </Panel>
             </Grid>
         </Border>
@@ -136,7 +147,7 @@
                      Height="2"
                      CornerRadius="0" />
 
-        <!-- the page, and the diagnostics of it on the right -->
+        <!-- the page, and the side panel looking at it (diagnostics or inspector) on the right -->
         <Grid Grid.Row="1" x:Name="ContentGrid" ColumnDefinitions="*,Auto,0">
             <browser:BrowserView Grid.Column="0"
                                   x:Name="View"
@@ -161,12 +172,12 @@
 
             <!-- a hairline, which is easier to grab than it looks -->
             <GridSplitter Grid.Column="1"
-                          x:Name="DiagnosticsSplitter"
+                          x:Name="PanelSplitter"
                           Width="5"
                           MinWidth="5"
                           ResizeDirection="Columns"
                           Background="Transparent"
-                          IsVisible="{Binding IsDiagnosticsOpen}">
+                          IsVisible="{Binding IsPanelOpen}">
                 <GridSplitter.Template>
                     <ControlTemplate>
                         <Border Background="{TemplateBinding Background}">
@@ -177,9 +188,9 @@
             </GridSplitter>
 
             <browser:BrowserView Grid.Column="2"
-                                  x:Name="DiagnosticsView"
-                                  Engine="{Binding DiagnosticsEngine}"
-                                  IsVisible="{Binding IsDiagnosticsOpen}" />
+                                  x:Name="PanelView"
+                                  Engine="{Binding PanelEngine}"
+                                  IsVisible="{Binding IsPanelOpen}" />
         </Grid>
     </Grid>
 

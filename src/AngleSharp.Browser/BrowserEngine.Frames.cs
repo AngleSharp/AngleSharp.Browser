@@ -2,10 +2,13 @@ namespace AngleSharp.Browser;
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using AngleSharp.Css.Dom;
 using AngleSharp.Dom;
 using AngleSharp.Html.Dom;
+using AngleSharp.Renderer;
 using AngleSharp.Renderer.Rendering;
 
 partial class BrowserEngine
@@ -13,10 +16,15 @@ partial class BrowserEngine
     private PointerFrame? _pointerFrame;
     private IDocument? _paintedDocument;
     private (RenderedFrame Frame, IDocument Document, int Width, int Height, int LayoutVersion)? _lastFrame;
+    // the latest frame the harness laid out or patched, whose metrics are reported once
+    private RenderedFrame? _lastLaidOutFrame;
     // anything but scrolling the page invalidates the last frame's layout
     private volatile bool _needsLayout = true;
     private volatile bool _needsFullLayout = true;
+    // if CSS transitions or animations ran in the last frame, i.e., time changes how it looks
+    private volatile bool _isLastFrameAnimating;
     private bool _isSyncingScroll;
+    private volatile bool _isPageScrollLocked;
 
     /// <summary>
     /// What the last frame painted where, together with what the pointer would show for each
@@ -24,7 +32,7 @@ partial class BrowserEngine
     /// </summary>
     private sealed record PointerFrame(IDocument Document, RenderedFrame Frame, HitTestMap Map, Dictionary<IElement, PointerInfo> Infos, double ScrollTop, bool IsScrollShiftable, int LayoutVersion);
 
-    private readonly record struct PointerInfo(string? Href, bool IsTextEntry);
+    private readonly record struct PointerInfo(string? Href, bool IsTextEntry, bool IsListBox);
 
     private readonly record struct PointerTarget(IElement? Element, string? Href, BrowserCursor Cursor, bool IsInScrollContainer);
 
@@ -73,6 +81,8 @@ partial class BrowserEngine
         var shown = _pointerFrame;
         var document = _document;
         var position = ScrollPosition;
+        var time = DateTimeOffset.Now;
+        var start = Stopwatch.GetTimestamp();
 
         if (shown is not { Frame.CanReposition: true } || !ReferenceEquals(shown.Document, document) || shown.ScrollTop == position)
         {
@@ -93,7 +103,8 @@ partial class BrowserEngine
             Invalidated?.Invoke(this, EventArgs.Empty);
         }
 
-        return new BrowserFrame(frame, () => OnFramePainted(document));
+        var layout = Stopwatch.GetElapsedTime(start);
+        return new BrowserFrame(frame, raster => OnFramePainted(document, new FrameTiming(time, FrameKind.Reposition, layout, raster)));
     }
 
     private BrowserFrame? PrepareFrame()
@@ -107,6 +118,10 @@ partial class BrowserEngine
 
         var document = _document!;
         var version = Volatile.Read(ref _layoutVersion);
+        var time = DateTimeOffset.Now;
+        var start = Stopwatch.GetTimestamp();
+        var kind = FrameKind.Layout;
+        var metrics = RenderMetrics.None;
         RenderedFrame frame;
 
         // a page scrolling as a whole is laid out once more with its overscan before frames are reused
@@ -117,11 +132,14 @@ partial class BrowserEngine
             // only the page scrolled: the last frame's display list covers all of it already, and
             // fixed boxes stay in place
             frame = last.Frame.Reposition(ScrollTop);
+            kind = FrameKind.Reposition;
         }
-        else if (!_needsFullLayout && TryReuseLastFrame(document) is { } reused)
+        else if (!_needsFullLayout && TryReuseLastFrame(document, out var patched) is { } reused)
         {
             _needsLayout = false;
             frame = reused;
+            kind = FrameKind.Update;
+            metrics = patched;
         }
         else
         {
@@ -132,7 +150,13 @@ partial class BrowserEngine
             try
             {
                 AdvanceClock();
-                frame = _harness.PrepareFrame(ViewportHeight / 2);
+                // a page shows up once what is in view is laid out, the next frame lays out all of it
+                frame = _lastFrame is { } previous && ReferenceEquals(previous.Document, document)
+                    ? _harness.PrepareFrame(ViewportHeight / 2)
+                    : _harness.PrepareViewportFrame(ViewportHeight / 2);
+                _lastLaidOutFrame = frame;
+                metrics = frame.Metrics;
+                UpdatePageScrollLock(document);
             }
             catch (Exception ex)
             {
@@ -148,7 +172,12 @@ partial class BrowserEngine
         _lastFrame = (frame, document, ViewportWidth, ViewportHeight, version);
 
         _pointerFrame = new PointerFrame(document, frame, frame.HitTestMap, CreatePointerInfos(frame.HitTestMap), frame.ScrollTop, frame.IsScrollShiftable, version);
-        UpdateScrollExtent(frame.ContentHeight, version);
+        // the page goes on below what a frame of the viewport only shows (it is animating)
+        if (!frame.IsPartial)
+        {
+            UpdateScrollExtent(frame.ContentHeight, version);
+        }
+
         AdoptScrollPosition(frame.ScrollTop);
         // the content below the pointer may have moved; like other browsers, the hover state
         // waits until scrolling ends, as each change of it needs a layout
@@ -157,13 +186,18 @@ partial class BrowserEngine
             UpdateHover(_lastPointer.X, _lastPointer.Y, isMove: false);
         }
 
+        _isLastFrameAnimating = frame.IsAnimating;
+
         // the first frame of a page tells if it scrolls as a whole, then it gets an overscan
         if (frame.IsAnimating || (frame is { IsScrollShiftable: true, OverscanTop: 0 } && ViewportHeight > 1))
         {
             Invalidate();
         }
 
-        return new BrowserFrame(frame, () => OnFramePainted(document));
+        // the list of an open dropdown is on top of the frame
+        var shown = RefreshSelectPopup() is { } popup ? frame.WithOverlay(popup.Overlay) : frame;
+        var layout = Stopwatch.GetElapsedTime(start);
+        return new BrowserFrame(shown, raster => OnFramePainted(document, new FrameTiming(time, kind, layout, raster) { Metrics = metrics }));
     }
 
     /// <summary>
@@ -173,12 +207,21 @@ partial class BrowserEngine
     /// every scroll), else the boxes out of the flow that changed are replaced in it (e.g. a menu
     /// changing its items). Requires exclusive access.
     /// </summary>
-    private RenderedFrame? TryReuseLastFrame(IDocument document)
+    private RenderedFrame? TryReuseLastFrame(IDocument document, out RenderMetrics metrics)
     {
+        metrics = RenderMetrics.None;
+
         if (_lastFrame is not { } last || !ReferenceEquals(last.Document, document) || last.Width != ViewportWidth || last.Height != ViewportHeight ||
             _harness.UpdateFrame() is not { } frame)
         {
             return null;
+        }
+
+        // the frame the harness had already, or one with boxes laid out since
+        if (!ReferenceEquals(frame, _lastLaidOutFrame))
+        {
+            _lastLaidOutFrame = frame;
+            metrics = frame.Metrics;
         }
 
         var scrollTop = ScrollTop;
@@ -189,6 +232,22 @@ partial class BrowserEngine
         }
 
         return frame.CanReposition && (frame.OverscanTop > 0 || !frame.IsScrollShiftable) ? frame.Reposition(scrollTop) : null;
+    }
+
+    /// <summary>
+    /// A page with overflow: hidden on its root (or, as that is propagated, on its body) cannot
+    /// be scrolled by the user, while it stays where it is, e.g., for the time a dialog is open.
+    /// </summary>
+    private void UpdatePageScrollLock(IDocument document)
+    {
+        var overflow = document.DocumentElement?.ComputeCurrentStyle().GetPropertyValue("overflow-y");
+
+        if (string.IsNullOrEmpty(overflow) || overflow == "visible")
+        {
+            overflow = document.Body?.ComputeCurrentStyle().GetPropertyValue("overflow-y");
+        }
+
+        _isPageScrollLocked = overflow is "hidden" or "clip";
     }
 
     private void AdvanceClock()
@@ -203,8 +262,10 @@ partial class BrowserEngine
         _lastPaint = now;
     }
 
-    private void OnFramePainted(IDocument document)
+    private void OnFramePainted(IDocument document, FrameTiming timing)
     {
+        _diagnostics.OnFrame(timing);
+
         if (!ReferenceEquals(Interlocked.Exchange(ref _paintedDocument, document), document))
         {
             OnStateChanged();
@@ -219,7 +280,7 @@ partial class BrowserEngine
         foreach (var element in map.Elements)
         {
             var link = FindLink(element, links);
-            infos[element] = new PointerInfo((link as IUrlUtilities)?.Href, FormControls.IsTextEntry(element));
+            infos[element] = new PointerInfo((link as IUrlUtilities)?.Href, FormControls.IsTextEntry(element), element.IsListBox());
         }
 
         return infos;
@@ -261,7 +322,7 @@ partial class BrowserEngine
         // a shiftable frame is shown shifted by the scrolling done since it was painted
         var frameY = frame.IsScrollShiftable ? y + ScrollPosition - frame.ScrollTop : y;
 
-        if (frame.Map.HitTest(x, frameY) is not { } hit || hit.Element.Owner != frame.Document)
+        if (frame.Map.HitTest(x, frameY) is not { } hit || !IsInPage(hit.Element.Owner))
         {
             return new PointerTarget(null, null, BrowserCursor.Default, false);
         }
@@ -275,7 +336,7 @@ partial class BrowserEngine
             _ when info.IsTextEntry => BrowserCursor.Text,
             _ => BrowserCursor.Default,
         };
-        return new PointerTarget(hit.Element, info.Href, cursor, hit.IsInScrollContainer);
+        return new PointerTarget(hit.Element, info.Href, cursor, hit.IsInScrollContainer || info.IsListBox);
     }
 
     /// <summary>

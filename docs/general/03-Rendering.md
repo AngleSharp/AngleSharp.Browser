@@ -41,6 +41,8 @@ if (frame is not null)
 
 Preparing a frame also refreshes what the engine knows for hit testing. The cursor and links are then looked up without touching the DOM, which keeps pointer moves responsive on busy pages.
 
+The first frame of a page shows up early: only what is in the viewport is styled and laid out for it. The engine asks for the next frame right away (it raises `Invalidated`), which lays out the whole page. Until then, the page below the viewport is blank, and the scroll position is not limited to the height of the page.
+
 ## Overscan and Scrolling
 
 A frame may be larger than the viewport: `OverscanTop` rows are painted above the viewport, and some more below it. The viewport starts at row `OverscanTop`.

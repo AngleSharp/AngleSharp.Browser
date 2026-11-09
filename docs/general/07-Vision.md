@@ -25,7 +25,7 @@ The profile and the settings are kept in the `Vision` folder of the local applic
 | File | Shows |
 | --- | --- |
 | `App.axaml.cs` | One engine per window, sharing a profile using `CreateWindow`, and handling `WindowRequested`. |
-| `ViewModels/MainViewModel.cs` | A toolbar and status bar on top of the engine's state and events. |
+| `ViewModels/MainViewModel.cs` | A toolbar and status bar on top of the engine's state and events, including the page's icon. |
 | `Views/MainWindow.axaml` | Placing `BrowserView` in a window, next to a second one for the diagnostics. |
 | `Models/BrowserSettings.cs` | Turning user settings into `BrowserOptions`. |
-| `Pages/` | The app's own UI (diagnostics, settings, about) written as HTML and CSS, and wired up with .NET event handlers through `InvokeAsync`, in an engine with scripting disabled. |
+| `Pages/` | The app's own UI (diagnostics, inspector, settings, site information, about) written as HTML and CSS, and wired up with .NET event handlers through `InvokeAsync`, in an engine with scripting disabled. |

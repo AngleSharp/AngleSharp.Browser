@@ -1,0 +1,207 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Inspector</title>
+<style>
+{{styles}}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+.top {
+  flex: none;
+}
+
+.tree {
+  flex: 1 1 55%;
+  min-height: 0;
+  padding: 4px 0;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.details {
+  flex: 1 1 45%;
+  min-height: 0;
+  padding: 8px 12px;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+}
+
+.row {
+  overflow: hidden;
+  padding-right: 8px;
+  line-height: 20px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+.row:hover {
+  background: var(--surface);
+}
+
+.row.selected {
+  background: var(--accent-soft);
+}
+
+.row.more {
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.twisty {
+  display: inline-block;
+  width: 16px;
+  color: var(--muted);
+  text-align: center;
+  cursor: pointer;
+}
+
+.tag, .selector {
+  color: var(--accent);
+}
+
+.attr {
+  color: var(--warning);
+}
+
+.val {
+  color: var(--success);
+}
+
+.punct, .comment, .size {
+  color: var(--muted);
+}
+
+.text {
+  color: var(--text);
+}
+
+.at {
+  color: var(--warning);
+}
+
+.chip {
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--surface-strong);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.path {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.section {
+  margin: 12px 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pair {
+  display: flex;
+  padding: 2px 0;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.pair .name {
+  flex: 0 0 42%;
+  overflow: hidden;
+  padding-right: 8px;
+  color: var(--accent);
+  text-overflow: ellipsis;
+}
+
+.pair .value {
+  flex: 1 1 0;
+  min-width: 0;
+  word-break: break-all;
+}
+
+.rule {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.rule .source {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.code {
+  margin: 2px 0 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.none {
+  margin: 2px 0;
+  color: var(--muted);
+}
+
+#computed-section {
+  display: none;
+}
+
+#computed-section.active {
+  display: block;
+}
+
+.filter {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+}
+</style>
+</head>
+<body>
+  <header class="top">
+    <div class="title-row">
+      <h1>Inspector</h1>
+      <button type="button" class="button small" id="refresh">Refresh</button>
+    </div>
+    <nav class="tabs">
+      <button type="button" class="tab active" id="tab-dom">DOM</button>
+      <button type="button" class="tab" id="tab-cssom">CSSOM</button>
+      <button type="button" class="tab" id="tab-render">Render tree</button>
+    </nav>
+  </header>
+  <main class="tree" id="tree"></main>
+  <aside class="details">
+    <div id="details-top"></div>
+    <div id="computed-section">
+      <h2 class="section">Computed style</h2>
+      <input type="text" class="filter" id="filter" placeholder="Filter properties">
+      <div id="computed"></div>
+    </div>
+  </aside>
+</body>
+</html>

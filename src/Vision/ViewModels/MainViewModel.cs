@@ -7,7 +7,10 @@ using AngleSharp.Browser;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
+using System.Diagnostics;
+using System.IO;
 using Vision.Pages;
 
 public partial class MainViewModel : ViewModelBase, IDisposable
@@ -15,9 +18,11 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     private const string ApplicationName = "Vision";
 
     private readonly IBrowserHost _host;
-    private DiagnosticsPage? _diagnostics;
+    private HtmlPage? _panel;
     private string? _lastUrl;
     private int _isErrorCheckPending;
+    private string? _iconUrl;
+    private CancellationTokenSource? _iconLoading;
 
     public MainViewModel(BrowserEngine engine, string startAddress, IBrowserHost host)
     {
@@ -53,27 +58,59 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     public partial string SiteInfo { get; set; } = string.Empty;
 
     /// <summary>
+    /// Gets the icon of the page, once it has been loaded.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPageIcon))]
+    public partial Bitmap? PageIcon { get; set; }
+
+    public bool HasPageIcon => PageIcon is not null;
+
+    /// <summary>
     /// Gets if the page reported errors, which the diagnostics show.
     /// </summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(NeedsAttention))]
     public partial bool HasErrors { get; set; }
 
+    /// <summary>
+    /// Gets if the side panel shows the diagnostics.
+    /// </summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(NeedsAttention))]
     public partial bool IsDiagnosticsOpen { get; set; }
 
     /// <summary>
-    /// Gets the engine showing the diagnostics of the page, while they are open.
+    /// Gets if the side panel shows the inspector.
     /// </summary>
     [ObservableProperty]
-    public partial BrowserEngine? DiagnosticsEngine { get; set; }
+    public partial bool IsInspectorOpen { get; set; }
+
+    /// <summary>
+    /// Gets if the side panel is open.
+    /// </summary>
+    [ObservableProperty]
+    public partial bool IsPanelOpen { get; set; }
+
+    /// <summary>
+    /// Gets the engine showing the side panel, while it is open.
+    /// </summary>
+    [ObservableProperty]
+    public partial BrowserEngine? PanelEngine { get; set; }
 
     public bool HasStatus => Status.Length > 0;
+
+    /// <summary>
+    /// Gets if there are errors the diagnostics would show, but are not showing right now.
+    /// </summary>
+    public bool NeedsAttention => HasErrors && !IsDiagnosticsOpen;
 
     public void Dispose()
     {
         Engine.Diagnostics.Changed -= OnDiagnosticsChanged;
         _host.ColorSchemeChanged -= OnColorSchemeChanged;
-        CloseDiagnostics();
+        _iconLoading?.Cancel();
+        ClosePanel();
     }
 
     [RelayCommand]
@@ -102,28 +139,45 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     private void OpenAbout() => _host.OpenAbout(Engine);
 
     [RelayCommand]
-    private async Task ToggleDiagnosticsAsync()
-    {
-        if (_diagnostics is not null)
-        {
-            CloseDiagnostics();
-            return;
-        }
+    private void OpenSiteInfo() => _host.OpenSiteInfo(Engine);
 
-        var page = new DiagnosticsPage(_host.ColorScheme, Engine);
-        _diagnostics = page;
-        DiagnosticsEngine = page.Engine;
-        IsDiagnosticsOpen = true;
-        await page.LoadAsync();
+    [RelayCommand]
+    private Task ToggleDiagnosticsAsync() => TogglePanelAsync<DiagnosticsPage>(() => new DiagnosticsPage(_host.ColorScheme, Engine));
+
+    [RelayCommand]
+    private Task ToggleInspectorAsync() => TogglePanelAsync<InspectorPage>(() => new InspectorPage(_host.ColorScheme, Engine));
+
+    /// <summary>
+    /// The side panel shows one page: the given one is closed if it is shown, else it replaces
+    /// whatever else is shown.
+    /// </summary>
+    private async Task TogglePanelAsync<T>(Func<T> create)
+        where T : HtmlPage
+    {
+        var wasOpen = _panel is T;
+        ClosePanel();
+
+        if (!wasOpen)
+        {
+            var page = create();
+            _panel = page;
+            PanelEngine = page.Engine;
+            IsDiagnosticsOpen = page is DiagnosticsPage;
+            IsInspectorOpen = page is InspectorPage;
+            IsPanelOpen = true;
+            await page.LoadAsync();
+        }
     }
 
-    private void CloseDiagnostics()
+    private void ClosePanel()
     {
-        if (_diagnostics is { } page)
+        if (_panel is { } page)
         {
-            _diagnostics = null;
+            _panel = null;
+            IsPanelOpen = false;
             IsDiagnosticsOpen = false;
-            DiagnosticsEngine = null;
+            IsInspectorOpen = false;
+            PanelEngine = null;
             page.Dispose();
         }
     }
@@ -136,9 +190,9 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     {
         Engine.ColorScheme = _host.ColorScheme;
 
-        if (DiagnosticsEngine is { } diagnostics)
+        if (PanelEngine is { } panel)
         {
-            diagnostics.ColorScheme = _host.ColorScheme;
+            panel.ColorScheme = _host.ColorScheme;
         }
     }
 
@@ -168,11 +222,51 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         IsSecure = isSecure;
         SiteInfo = isSecure ? "Connection is secure" : "Connection is not secure";
         WindowTitle = string.IsNullOrWhiteSpace(Engine.Title) ? ApplicationName : $"{Engine.Title} - {ApplicationName}";
+
+        if (Engine.IconUrl != _iconUrl)
+        {
+            _iconUrl = Engine.IconUrl;
+            _ = LoadIconAsync();
+        }
+
         // a page has loaded once it is visible, which needs its first frame
         IsLoading = Engine.IsLoading || !Engine.HasPaintedDocument;
         GoBackCommand.NotifyCanExecuteChanged();
         GoForwardCommand.NotifyCanExecuteChanged();
         UpdateStatus();
+    }
+
+    /// <summary>
+    /// Loads the icon of the current page, which replaces the one of the previous page.
+    /// </summary>
+    private async Task LoadIconAsync()
+    {
+        _iconLoading?.Cancel();
+        var loading = _iconLoading = new CancellationTokenSource();
+        Bitmap? icon = null;
+
+        try
+        {
+            if (await Engine.LoadIconAsync(loading.Token) is { } content)
+            {
+                // bitmaps of any kind (PNG, ICO, ...) but SVG, sized for the toolbar and the title bar
+                using var stream = new MemoryStream(content);
+                icon = Bitmap.DecodeToWidth(stream, 64, BitmapInterpolationMode.HighQuality);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Trace.WriteLine($"Loading the page icon failed: {ex.Message}");
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (!loading.IsCancellationRequested)
+        {
+            PageIcon = icon;
+        }
     }
 
     private void UpdateStatus()

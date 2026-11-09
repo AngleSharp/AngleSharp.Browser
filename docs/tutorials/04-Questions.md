@@ -63,3 +63,27 @@ await engine.NavigateAsync("data:text/html," + Uri.EscapeDataString("<title>Hell
 ## Does the engine run on servers without a display?
 
 Yes. Painting only requires SkiaSharp, whose native assets are included. On Linux they depend on fontconfig, so make sure it and some fonts are installed. Only `AngleSharp.Browser.Avalonia` needs a UI.
+
+## How do I make large pages paint faster?
+
+Use the server GC in the application. Laying out a large page keeps a lot alive until it is done (the styles and boxes of all elements), which the default workstation GC copies on a single thread for every collection meanwhile; the server GC does it on all cores, and its heaps adapt to the size of the application. For GitHub's start page, the pauses for garbage collection went from about 150 ms to 40 ms per frame, for about 200 MB more memory:
+
+```xml
+<PropertyGroup>
+  <ServerGarbageCollection>true</ServerGarbageCollection>
+</PropertyGroup>
+```
+
+The first frames of a page are mostly spent compiling and optimizing code. A host shortens them by publishing precompiled code, and by not having the runtime wait for a quiet moment before it optimizes what is called often:
+
+```xml
+<PropertyGroup>
+  <PublishReadyToRun Condition="'$(RuntimeIdentifier)' != ''">true</PublishReadyToRun>
+</PropertyGroup>
+
+<ItemGroup>
+  <RuntimeHostConfigurationOption Include="System.Runtime.TieredCompilation.CallCountingDelayMs" Value="0" />
+</ItemGroup>
+```
+
+The styles and the style maps of large pages are computed on all cores. A host that has none to spare turns this off with the AppContext switches `AngleSharp.Css.DisableParallelism` and `AngleSharp.Renderer.DisableParallelism`.
