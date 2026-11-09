@@ -109,12 +109,12 @@ public class BrowserViewTests
     public async Task AnEngineShowingAPageKeepsItAndUpdatesTheSource()
     {
         using var engine = new BrowserEngine();
-        await engine.NavigateAsync(BluePage);
         var view = new BrowserView { Source = RedPage };
         var window = Show(view);
         await WaitUntil(() => view.Engine?.Title == "Red");
         var created = view.Engine!;
 
+        await engine.NavigateAsync(BluePage);
         view.Engine = engine;
 
         Assert.That(view.Source, Is.EqualTo(BluePage));
