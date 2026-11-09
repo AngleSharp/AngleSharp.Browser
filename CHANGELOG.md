@@ -10,6 +10,7 @@ Released on Monday, November 9 2026.
 - Added a waterfall of the requests, the rendering timings and the stack traces of errors to the diagnostics of `Vision`
 - Added an inspector to `Vision`, showing the DOM, the CSSOM and the render tree of a page
 - Added the server GC to `Vision`, which shortens the pauses for garbage collection while laying out large pages
+- Added precompiled code (ReadyToRun) to published versions of `Vision`, and optimizing often called code without a delay, which shortens the first frames of a page
 - Added the metrics of the renderer to the frame timings of `BrowserDiagnostics` (`FrameTiming.Metrics`), and their breakdown to the performance diagnostics of `Vision`
 - Added showing a page that was just loaded early on: its first frame styles and lays out just what is in view, the next one all of the page
 - Added patching the frame after hovering or focusing an element, which is painted again instead of laid out when only colors, backgrounds, borders or text decoration change

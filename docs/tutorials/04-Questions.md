@@ -74,4 +74,16 @@ Use the server GC in the application. Laying out a large page keeps a lot alive 
 </PropertyGroup>
 ```
 
+The first frames of a page are mostly spent compiling and optimizing code. A host shortens them by publishing precompiled code, and by not having the runtime wait for a quiet moment before it optimizes what is called often:
+
+```xml
+<PropertyGroup>
+  <PublishReadyToRun Condition="'$(RuntimeIdentifier)' != ''">true</PublishReadyToRun>
+</PropertyGroup>
+
+<ItemGroup>
+  <RuntimeHostConfigurationOption Include="System.Runtime.TieredCompilation.CallCountingDelayMs" Value="0" />
+</ItemGroup>
+```
+
 The styles and the style maps of large pages are computed on all cores. A host that has none to spare turns this off with the AppContext switches `AngleSharp.Css.DisableParallelism` and `AngleSharp.Renderer.DisableParallelism`.
