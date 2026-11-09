@@ -1,3 +1,9 @@
+# 0.2.0
+
+Released on tbd.
+
+- tbd
+
 # 0.1.0
 
 Released on Monday, November 9 2026.
