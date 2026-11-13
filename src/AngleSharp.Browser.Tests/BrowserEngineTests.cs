@@ -44,6 +44,47 @@ public class BrowserEngineTests
         Assert.That(BrowserEngine.NormalizeAddress(input), Is.EqualTo(expected));
     }
 
+    [TestCase("app:settings", "app:settings")]
+    [TestCase("APP://settings/", "APP://settings/")]
+    [TestCase("localhost:8080", "https://localhost:8080")]
+    [TestCase("other:settings", "https://other:settings")]
+    public void NormalizeAddressKeepsCustomSchemes(string input, string expected)
+    {
+        Assert.That(BrowserEngine.NormalizeAddress(input, ["app"]), Is.EqualTo(expected));
+    }
+
+    [Test]
+    public async Task CustomSchemesAreAnsweredByTheirHandlers()
+    {
+        var requested = new List<string>();
+        var options = new BrowserOptions { ProfileDirectory = null };
+        options.SchemeHandlers["app"] = (request, _) =>
+        {
+            requested.Add(request.Address.Href);
+            var response = new DefaultResponse
+            {
+                Address = request.Address,
+                StatusCode = System.Net.HttpStatusCode.OK,
+                Content = new MemoryStream(System.Text.Encoding.UTF8.GetBytes("<title>Own</title><a id=next href=\"app:next\">next</a>")),
+            };
+            response.Headers[HeaderNames.ContentType] = "text/html; charset=utf-8";
+            return Task.FromResult<IResponse?>(response);
+        };
+        using var engine = new BrowserEngine(options);
+
+        await engine.NavigateAsync("app:start");
+
+        Assert.That(engine.Schemes, Is.EqualTo(new[] { "app" }));
+        Assert.That(engine.Url, Is.EqualTo("app:start"));
+        Assert.That(engine.Title, Is.EqualTo("Own"));
+
+        // links of the scheme go to the handler as well
+        await engine.InvokeAsync(d => ((IHtmlElement)d!.GetElementById("next")!).DoClick());
+        await Eventually(() => engine.Url == "app:next" && !engine.IsLoading);
+
+        Assert.That(requested, Is.EqualTo(new[] { "app:start", "app:next" }));
+    }
+
     private async Task<(IDocument Nested, IHtmlInlineFrameElement Frame)> LoadFrameAsync(string frameHtml, string pageStyle = "")
     {
         var srcdoc = System.Net.WebUtility.HtmlEncode(frameHtml);

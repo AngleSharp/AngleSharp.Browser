@@ -3,6 +3,8 @@ namespace AngleSharp.Browser;
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Threading;
+using System.Threading.Tasks;
 using AngleSharp.Io;
 using AngleSharp.Io.Dom;
 using AngleSharp.Io.ServiceWorkerApi;
@@ -86,6 +88,14 @@ public sealed class BrowserOptions
     /// configuration before the browsing context is created.
     /// </summary>
     public Func<IConfiguration, IConfiguration>? Configure { get; set; }
+
+    /// <summary>
+    /// Gets the handlers of custom URL schemes by their name (without the colon), e.g., "app"
+    /// answering the requests of "app:settings". A handler answers null if there is nothing at
+    /// the address. Addresses of these schemes are navigated to as entered.
+    /// </summary>
+    public IDictionary<string, Func<Request, CancellationToken, Task<IResponse?>>> SchemeHandlers { get; } =
+        new Dictionary<string, Func<Request, CancellationToken, Task<IResponse?>>>(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Creates the IO options of an engine. Another window of a profile shares its data, but

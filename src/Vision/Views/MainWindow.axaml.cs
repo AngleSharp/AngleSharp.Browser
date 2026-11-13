@@ -1,7 +1,13 @@
 using System;
 using System.ComponentModel;
+using Vision.Models;
 using Vision.ViewModels;
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
 
 namespace Vision.Views;
 
@@ -20,6 +26,46 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         Icon = AppIcon.Default;
+        // before the text box uses the keys to move the caret
+        AddressBox.AddHandler(KeyDownEvent, OnAddressKeyDown, RoutingStrategies.Tunnel);
+        AddressBox.LostFocus += OnAddressLostFocus;
+        SuggestionList.AddHandler(PointerPressedEvent, OnSuggestionPressed, RoutingStrategies.Tunnel);
+    }
+
+    private void OnAddressKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (_viewModel is { } viewModel && e.KeyModifiers == KeyModifiers.None)
+        {
+            e.Handled = e.Key switch
+            {
+                Key.Down => viewModel.MoveSuggestion(1),
+                Key.Up => viewModel.MoveSuggestion(-1),
+                Key.Escape => viewModel.CloseSuggestions(),
+                _ => false,
+            };
+        }
+    }
+
+    private void OnAddressLostFocus(object? sender, RoutedEventArgs e)
+    {
+        // a click on a suggestion comes first
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!AddressBox.IsFocused)
+            {
+                _viewModel?.CloseSuggestions();
+            }
+        }, DispatcherPriority.Background);
+    }
+
+    private void OnSuggestionPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (_viewModel is { } viewModel && e.GetCurrentPoint(SuggestionList).Properties.IsLeftButtonPressed &&
+            (e.Source as Visual)?.FindAncestorOfType<ListBoxItem>(includeSelf: true)?.DataContext is UrlSuggestion suggestion)
+        {
+            e.Handled = true;
+            _ = viewModel.NavigateToAsync(suggestion);
+        }
     }
 
     protected override void OnDataContextChanged(EventArgs e)

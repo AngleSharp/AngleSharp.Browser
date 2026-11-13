@@ -17,31 +17,51 @@ using Avalonia.Threading;
 public abstract class HtmlPage : IDisposable
 {
     private readonly string _name;
+    private readonly string? _colorScheme;
+    private BrowserEngine? _engine;
+    private bool _isOwningEngine;
 
     protected HtmlPage(string name, string? colorScheme)
     {
         _name = name;
-        Engine = new BrowserEngine(new BrowserOptions
-        {
-            // the browser's own pages keep no data, and their logic is C#
-            ProfileDirectory = null,
-            IsScriptingEnabled = false,
-            ColorScheme = colorScheme,
-        });
+        _colorScheme = colorScheme;
     }
 
     /// <summary>
-    /// Gets the engine showing the page.
+    /// Gets the engine showing the page: its own one, unless the page was loaded by another
+    /// (see <see cref="Attach"/>).
     /// </summary>
-    public BrowserEngine Engine { get; }
+    public BrowserEngine Engine
+    {
+        get
+        {
+            if (_engine is null)
+            {
+                _isOwningEngine = true;
+                _engine = new BrowserEngine(new BrowserOptions
+                {
+                    // the browser's own pages keep no data, and their logic is C#
+                    ProfileDirectory = null,
+                    IsScriptingEnabled = false,
+                    ColorScheme = _colorScheme,
+                });
+            }
+
+            return _engine;
+        }
+    }
 
     /// <summary>
-    /// Loads the page and wires it up.
+    /// Gets the source of the page, with its placeholders filled in.
+    /// </summary>
+    public string GetSource() => Prepare(ReadResource($"{_name}.html").Replace("{{styles}}", ReadResource("pages.css")));
+
+    /// <summary>
+    /// Loads the page in its own engine and wires it up.
     /// </summary>
     public async Task LoadAsync()
     {
-        var html = ReadResource($"{_name}.html").Replace("{{styles}}", ReadResource("pages.css"));
-        await Engine.LoadHtmlAsync(Prepare(html), $"about:{_name}");
+        await Engine.LoadHtmlAsync(GetSource(), $"about:{_name}");
         await Engine.InvokeAsync(document =>
         {
             if (document is not null)
@@ -51,7 +71,26 @@ public abstract class HtmlPage : IDisposable
         });
     }
 
-    public virtual void Dispose() => Engine.Dispose();
+    /// <summary>
+    /// Wires up the page (its <see cref="GetSource"/>) once the given engine loaded it, e.g.,
+    /// from an address of its own. Runs on the engine's event loop.
+    /// </summary>
+    public void Attach(BrowserEngine engine, IDocument document)
+    {
+        if (_engine is null)
+        {
+            _engine = engine;
+            Wire(document);
+        }
+    }
+
+    public virtual void Dispose()
+    {
+        if (_isOwningEngine)
+        {
+            _engine?.Dispose();
+        }
+    }
 
     /// <summary>
     /// Fills in placeholders of the page's source before it is loaded.

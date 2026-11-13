@@ -22,11 +22,15 @@ public partial class App : Application, IBrowserHost
     private readonly List<BrowserWindow> _windows = [];
     private BrowserSettings _settings = new();
     private CommandLine _arguments = new(null, null, false);
+    private readonly Dictionary<string, UrlHistory> _histories = [];
+    private UrlHistory? _inMemoryHistory;
     private PageWindow? _settingsWindow;
 
     public event EventHandler? ColorSchemeChanged;
 
     public string ColorScheme => ActualThemeVariant == ThemeVariant.Dark ? "dark" : "light";
+
+    public string StartPage => _settings.StartPage;
 
     public override void Initialize()
     {
@@ -62,7 +66,7 @@ public partial class App : Application, IBrowserHost
             return;
         }
 
-        var page = new SettingsPage(ColorScheme, _settings, ApplySettings, () => _settingsWindow?.Close());
+        var page = CreateSettingsPage(() => _settingsWindow?.Close());
         _settingsWindow = new PageWindow(page, this)
         {
             Title = "Settings - Vision",
@@ -82,6 +86,8 @@ public partial class App : Application, IBrowserHost
             _settingsWindow.Show();
         }
     }
+
+    public HtmlPage CreateSettingsPage(Action close) => new SettingsPage(ColorScheme, _settings, ApplySettings, close);
 
     public void OpenSiteInfo(BrowserEngine owner)
     {
@@ -189,6 +195,10 @@ public partial class App : Application, IBrowserHost
         options.ScreenHeight = screen?.Height ?? 1080;
         options.ColorScheme = ColorScheme;
 
+        // the browser's own pages (vision:settings, ...) are shown by the window like any page
+        var pages = new VisionPages(this);
+        options.SchemeHandlers[VisionPages.Scheme] = pages.HandleAsync;
+
         // in-memory profiles are only shared with the opener, a directory with any window using it
         var profileOwner = _windows.FirstOrDefault(m => m.Engine == opener && m.ProfileDirectory == options.ProfileDirectory)
             ?? (options.ProfileDirectory is null ? null : _windows.FirstOrDefault(m => m.ProfileDirectory == options.ProfileDirectory));
@@ -207,11 +217,13 @@ public partial class App : Application, IBrowserHost
         {
             // a window that cannot be created must not take the others down with it
             Trace.WriteLine($"Opening a window failed: {ex}");
+            pages.Dispose();
             return null;
         }
 
         var entry = new BrowserWindow(window, engine, options.ProfileDirectory);
-        var viewModel = new MainViewModel(engine, address ?? _settings.StartPage, this);
+        pages.Attach(engine);
+        var viewModel = new MainViewModel(engine, address ?? _settings.StartPage, this, GetHistory(options.ProfileDirectory));
 
         engine.WindowRequested += (_, request) =>
         {
@@ -227,9 +239,31 @@ public partial class App : Application, IBrowserHost
         {
             _windows.Remove(entry);
             viewModel.Dispose();
+            pages.Dispose();
             engine.Dispose();
         };
         return window;
+    }
+
+    /// <summary>
+    /// The addresses visited with a profile, which windows using it share. In-memory profiles
+    /// share one that is not kept.
+    /// </summary>
+    private UrlHistory GetHistory(string? profileDirectory)
+    {
+        if (profileDirectory is null)
+        {
+            return _inMemoryHistory ??= new UrlHistory();
+        }
+
+        var key = Path.GetFullPath(profileDirectory);
+
+        if (!_histories.TryGetValue(key, out var history))
+        {
+            _histories[key] = history = new UrlHistory(key);
+        }
+
+        return history;
     }
 
     private void OnAboutClicked(object? sender, EventArgs e)

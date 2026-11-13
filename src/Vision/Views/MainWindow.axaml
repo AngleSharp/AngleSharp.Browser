@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:Vision.ViewModels"
+        xmlns:models="using:Vision.Models"
         xmlns:browser="using:AngleSharp.Browser.Avalonia"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -50,7 +51,7 @@
                     <PathIcon Data="{StaticResource ReloadIcon}" />
                 </Button>
 
-                <Border Grid.Column="3" Classes="omnibox" Margin="6,0">
+                <Border Grid.Column="3" x:Name="Omnibox" Classes="omnibox" Margin="6,0">
                     <Grid ColumnDefinitions="Auto,Auto,*">
                         <!-- the site information: how the connection is secured -->
                         <Button Grid.Column="0"
@@ -83,6 +84,31 @@
                         </TextBox>
                     </Grid>
                 </Border>
+
+                <!-- the addresses visited before, which match what is typed -->
+                <Popup Grid.Column="3"
+                       x:Name="SuggestionPopup"
+                       PlacementTarget="{Binding #Omnibox}"
+                       Placement="BottomEdgeAlignedLeft"
+                       VerticalOffset="4"
+                       IsOpen="{Binding IsSuggesting, Mode=OneWay}">
+                    <Border Classes="suggestions" Width="{Binding #Omnibox.Bounds.Width}">
+                        <ListBox x:Name="SuggestionList"
+                                 Classes="suggestions"
+                                 Focusable="False"
+                                 ItemsSource="{Binding Suggestions}"
+                                 SelectedIndex="{Binding SelectedSuggestionIndex}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="models:UrlSuggestion">
+                                    <StackPanel>
+                                        <TextBlock Classes="heading" Text="{Binding Heading}" />
+                                        <TextBlock Classes="address" Text="{Binding Url}" IsVisible="{Binding HasTitle}" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Border>
+                </Popup>
 
                 <Panel Grid.Column="4">
                     <!-- the page reported errors, which the diagnostics show -->

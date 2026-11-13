@@ -21,6 +21,7 @@ Everything that touches the outside world is configured via `BrowserOptions`, wh
 | `FontSize` | 16 | The default font size in CSS pixels. |
 | `ConfigureIo` | `null` | A callback customizing the IO options. |
 | `Configure` | `null` | A callback extending the AngleSharp configuration. |
+| `SchemeHandlers` | empty | Handlers answering the requests of custom URL schemes. |
 
 ```cs
 var options = new BrowserOptions
@@ -68,6 +69,35 @@ var options = new BrowserOptions
     Configure = config => config.WithLocaleBasedEncoding(),
 };
 ```
+
+## Custom Schemes
+
+`SchemeHandlers` registers URL schemes of the host, e.g., for its own pages. A handler gets the request and answers a response, or `null` if there is nothing at the address. Pages can link to these addresses, and `NavigateAsync` keeps them as they are (`Schemes` lists them; `BrowserEngine.NormalizeAddress(address, schemes)` does the same for an address bar):
+
+```cs
+using System.IO;
+using System.Net;
+using System.Text;
+using AngleSharp.Io;
+
+var options = new BrowserOptions();
+options.SchemeHandlers["app"] = (request, cancellationToken) =>
+{
+    var response = new DefaultResponse
+    {
+        Address = request.Address,
+        StatusCode = HttpStatusCode.OK,
+        Content = new MemoryStream(Encoding.UTF8.GetBytes($"<h1>{request.Address.Data}</h1>")),
+    };
+    response.Headers[HeaderNames.ContentType] = "text/html; charset=utf-8";
+    return Task.FromResult<IResponse?>(response);
+};
+
+using var engine = new BrowserEngine(options);
+await engine.NavigateAsync("app:settings");
+```
+
+The handlers are asked before the built-in requesters, so a handler for `http` would take over the network.
 
 ## Multiple Windows
 

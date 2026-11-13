@@ -39,6 +39,23 @@ public class JavaScriptTests
     }
 
     [Test]
+    public async Task CallersDoNotContinueOnTheEventLoop()
+    {
+        await _engine.LoadHtmlAsync("<p>Frames</p>", Address);
+        var loopThread = await _engine.InvokeAsync(_ => Environment.CurrentManagedThreadId);
+
+        // what a caller does with a frame (e.g. rasterizing it) would hold up the scripts there
+        var frame = await _engine.PrepareFrameAsync();
+
+        Assert.That(frame, Is.Not.Null);
+        Assert.That(Environment.CurrentManagedThreadId, Is.Not.EqualTo(loopThread));
+
+        await _engine.EvaluateScriptAsync("1");
+
+        Assert.That(Environment.CurrentManagedThreadId, Is.Not.EqualTo(loopThread));
+    }
+
+    [Test]
     public async Task EvaluatingScriptsWithoutScriptingReturnsNothing()
     {
         using var engine = new BrowserEngine(new BrowserOptions { ProfileDirectory = null, IsScriptingEnabled = false });
@@ -248,6 +265,53 @@ public class JavaScriptTests
     }
 
     [Test]
+    public async Task HoverFiresEnterAndLeaveWithTheRelatedTargetAndPointerType()
+    {
+        await _engine.LoadHtmlAsync("""
+            <div id=a style="position:absolute;left:0;top:0;width:200px;height:200px"><div id=b style="width:100px;height:100px"></div></div>
+            <script>
+            window.seen = [];
+            const a = document.getElementById('a');
+            for (const type of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'mouseout', 'mouseleave']) {
+                a.addEventListener(type, function (e) {
+                    window.seen.push(type + '@' + e.target.id + '<' + (e.relatedTarget ? e.relatedTarget.id || e.relatedTarget.nodeName : 'null') + (e.pointerType ? ':' + e.pointerType : ''));
+                });
+            }
+            </script>
+            """, Address);
+        await _engine.PrepareFrameAsync();
+
+        await _engine.MovePointerAsync(400, 400);
+        await _engine.MovePointerAsync(150, 150);
+        await _engine.MovePointerAsync(50, 50);
+        await _engine.MovePointerAsync(400, 400);
+
+        Assert.That(await _engine.EvaluateScriptAsync("window.seen.join()"), Is.EqualTo(
+            "pointerover@a<HTML:mouse,pointerenter@a<HTML:mouse,mouseover@a<HTML,mouseenter@a<HTML," +
+            "pointerover@b<a:mouse,mouseout@a<b,mouseover@b<a," +
+            "mouseout@b<HTML,mouseleave@a<HTML"));
+    }
+
+    [Test]
+    public async Task EventsOfTheDocumentReachTheWindow()
+    {
+        await _engine.LoadHtmlAsync("""
+            <div id=a style="width:200px;height:200px"></div>
+            <script>
+            window.seen = [];
+            window.addEventListener('mousemove', function (e) { window.seen.push('window:' + e.composedPath().length); });
+            window.addEventListener('keydown', function (e) { window.seen.push('key:' + e.composedPath()[0].nodeName); });
+            </script>
+            """, Address);
+        await _engine.PrepareFrameAsync();
+
+        await _engine.MovePointerAsync(50, 50);
+        await _engine.KeyDownAsync("a");
+
+        Assert.That(await _engine.EvaluateScriptAsync("window.seen.join()"), Is.EqualTo("window:5,key:BODY"));
+    }
+
+    [Test]
     public async Task KeysTellTheirLegacyNamesAndCode()
     {
         await _engine.LoadHtmlAsync("""
@@ -263,6 +327,25 @@ public class JavaScriptTests
         await _engine.KeyDownAsync("a");
 
         Assert.That(await _engine.EvaluateScriptAsync("window.seen.join()"), Is.EqualTo("Enter:Enter:13:13,a:KeyA:65:65"));
+    }
+
+    [Test]
+    public async Task ModifierKeysPressedOnTheirOwnReachThePage()
+    {
+        // a game firing on Control (keyCode 17), like the Spaceshoot sample of Piral
+        await _engine.LoadHtmlAsync("""
+            <script>
+            window.seen = [];
+            document.addEventListener('keydown', function (e) { window.seen.push(e.key + ':' + e.keyCode); });
+            </script>
+            """, Address);
+
+        await _engine.KeyDownAsync("Control", InputModifiers.Control);
+        await _engine.KeyDownAsync("Shift", InputModifiers.Shift);
+        await _engine.KeyDownAsync("Alt", InputModifiers.Alt);
+        await _engine.KeyDownAsync("Meta", InputModifiers.Meta);
+
+        Assert.That(await _engine.EvaluateScriptAsync("window.seen.join()"), Is.EqualTo("Control:17,Shift:16,Alt:18,Meta:91"));
     }
 
     [Test]

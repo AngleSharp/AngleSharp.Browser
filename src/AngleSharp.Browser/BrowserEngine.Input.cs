@@ -72,6 +72,11 @@ partial class BrowserEngine
     private bool _isPointerWorkerRunning;
     private int _hitTestVersion = -1;
     private IElement? _hovered;
+
+    /// <summary>
+    /// The hovered element and its ancestors when it got hovered, the outermost first.
+    /// </summary>
+    private List<IElement> _hoverChain = [];
     private IElement? _pressed;
     // where the selection of the focused list box was last changed from, and what is active in it
     private IElement? _listBoxAnchor;
@@ -445,19 +450,13 @@ partial class BrowserEngine
 
         if (element != previous)
         {
-            if (previous is not null && IsInPage(previous.Owner))
-            {
-                Fire(previous, CreateMouseEvent(previous, "pointerout", x, y, InputModifiers.None));
-                Fire(previous, CreateMouseEvent(previous, "mouseout", x, y, InputModifiers.None));
-            }
-
-            if (element is not null)
-            {
-                Fire(element, CreateMouseEvent(element, "pointerover", x, y, InputModifiers.None));
-                Fire(element, CreateMouseEvent(element, "mouseover", x, y, InputModifiers.None));
-            }
-
+            var left = previous is not null && IsInPage(previous.Owner) ? previous : null;
+            var chain = GetHoverChain(element);
+            // the boundary events of pointers come first, then the ones of the mouse (as in Chromium)
+            FireBoundaryEvents("pointer", left, element, chain, x, y);
+            FireBoundaryEvents("mouse", left, element, chain, x, y);
             _hovered = element;
+            _hoverChain = chain;
             KeepAnimating(InteractionDuration);
         }
 
@@ -1111,26 +1110,99 @@ partial class BrowserEngine
         Fire(element, new Event("change", true, false));
     }
 
-    private MouseEvent CreateMouseEvent(IElement target, string type, double x, double y, InputModifiers modifiers)
+    /// <summary>
+    /// Gets the elements the pointer is over: the element and its ancestors, the outermost first.
+    /// </summary>
+    private static List<IElement> GetHoverChain(IElement? element)
     {
-        var (clientX, clientY) = ToClient(target, x, y);
-        return CreateMouseEvent(target.Owner?.DefaultView ?? _document?.DefaultView, type, x, y, clientX, clientY, modifiers);
+        var chain = new List<IElement>();
+
+        for (; element is not null; element = element.ParentElement)
+        {
+            chain.Add(element);
+        }
+
+        chain.Reverse();
+        return chain;
     }
 
-    private static MouseEvent CreateMouseEvent(IWindow? view, string type, double x, double y, double clientX, double clientY, InputModifiers modifiers) => new(
-        type,
-        bubbles: true,
-        cancelable: true,
-        view: view,
-        detail: 1,
-        screenX: (int)x,
-        screenY: (int)y,
-        clientX: (int)clientX,
-        clientY: (int)clientY,
-        ctrlKey: modifiers.HasFlag(InputModifiers.Control),
-        altKey: modifiers.HasFlag(InputModifiers.Alt),
-        shiftKey: modifiers.HasFlag(InputModifiers.Shift),
-        metaKey: modifiers.HasFlag(InputModifiers.Meta));
+    /// <summary>
+    /// Fires the out and leave events for the element the pointer left, then the over and enter
+    /// events for the one it is over now, of the given kind ("pointer" or "mouse"). The enter
+    /// and leave events don't bubble and only reach the elements the pointer entered or left.
+    /// </summary>
+    private void FireBoundaryEvents(string kind, IElement? left, IElement? entered, List<IElement> chain, double x, double y)
+    {
+        if (left is not null)
+        {
+            Fire(left, CreateMouseEvent(left, kind + "out", x, y, InputModifiers.None, entered));
+
+            for (var i = _hoverChain.Count - 1; i >= 0; i--)
+            {
+                var ancestor = _hoverChain[i];
+
+                if (!chain.Contains(ancestor) && IsInPage(ancestor.Owner) && ancestor.IsConnected())
+                {
+                    Fire(ancestor, CreateMouseEvent(ancestor, kind + "leave", x, y, InputModifiers.None, entered, bubbles: false));
+                }
+            }
+        }
+
+        if (entered is not null)
+        {
+            Fire(entered, CreateMouseEvent(entered, kind + "over", x, y, InputModifiers.None, left));
+
+            foreach (var ancestor in chain)
+            {
+                if (!_hoverChain.Contains(ancestor))
+                {
+                    Fire(ancestor, CreateMouseEvent(ancestor, kind + "enter", x, y, InputModifiers.None, left, bubbles: false));
+                }
+            }
+        }
+    }
+
+    private MouseEvent CreateMouseEvent(IElement target, string type, double x, double y, InputModifiers modifiers, IEventTarget? relatedTarget = null, bool bubbles = true)
+    {
+        var (clientX, clientY) = ToClient(target, x, y);
+        return CreateMouseEvent(target.Owner?.DefaultView ?? _document?.DefaultView, type, x, y, clientX, clientY, modifiers, relatedTarget, bubbles);
+    }
+
+    private static MouseEvent CreateMouseEvent(IWindow? view, string type, double x, double y, double clientX, double clientY, InputModifiers modifiers, IEventTarget? relatedTarget = null, bool bubbles = true) =>
+        // the pointer events of the mouse are the ones of the primary pointer, which scripts tell
+        // from touch by their type (e.g. SmartMenus only opens menus on hover for a mouse)
+        type.StartsWith("pointer", StringComparison.Ordinal) ? new PointerEvent(
+            type,
+            bubbles: bubbles,
+            // like in browsers, the enter and leave events can't be canceled
+            cancelable: bubbles,
+            view: view,
+            screenX: (int)x,
+            screenY: (int)y,
+            clientX: (int)clientX,
+            clientY: (int)clientY,
+            ctrlKey: modifiers.HasFlag(InputModifiers.Control),
+            altKey: modifiers.HasFlag(InputModifiers.Alt),
+            shiftKey: modifiers.HasFlag(InputModifiers.Shift),
+            metaKey: modifiers.HasFlag(InputModifiers.Meta),
+            relatedTarget: relatedTarget,
+            pointerId: 1,
+            pointerType: "mouse",
+            isPrimary: true) : new MouseEvent(
+            type,
+            bubbles: bubbles,
+            cancelable: bubbles,
+            view: view,
+            detail: 1,
+            screenX: (int)x,
+            screenY: (int)y,
+            clientX: (int)clientX,
+            clientY: (int)clientY,
+            ctrlKey: modifiers.HasFlag(InputModifiers.Control),
+            altKey: modifiers.HasFlag(InputModifiers.Alt),
+            shiftKey: modifiers.HasFlag(InputModifiers.Shift),
+            metaKey: modifiers.HasFlag(InputModifiers.Meta),
+            relatedTarget: relatedTarget);
 
     private KeyboardEvent CreateKeyboardEvent(string type, string key, InputModifiers modifiers) => new LegacyKeyboardEvent(
         type,

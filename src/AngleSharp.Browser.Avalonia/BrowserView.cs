@@ -67,7 +67,20 @@ public sealed class BrowserView : Control
         [Key.PageDown] = "PageDown",
         [Key.Home] = "Home",
         [Key.End] = "End",
+        [Key.Insert] = "Insert",
+        [Key.LeftCtrl] = "Control",
+        [Key.RightCtrl] = "Control",
+        [Key.LeftShift] = "Shift",
+        [Key.RightShift] = "Shift",
+        [Key.LeftAlt] = "Alt",
+        [Key.RightAlt] = "Alt",
+        [Key.LWin] = "Meta",
+        [Key.RWin] = "Meta",
     };
+
+    // pressing a modifier on its own is a key of the page (e.g. Control firing in a game), while
+    // the window still gets it for its shortcuts
+    private static bool IsModifierKey(string key) => key is "Control" or "Shift" or "Alt" or "Meta";
 
     private readonly Cursor _arrowCursor = new(StandardCursorType.Arrow);
     private readonly Cursor _handCursor = new(StandardCursorType.Hand);
@@ -325,7 +338,7 @@ public sealed class BrowserView : Control
         {
             // shortcuts with control or alt are left to the window; keys producing
             // characters stay unhandled, as Avalonia only raises TextInput for those
-            e.Handled = key is not null && key != " ";
+            e.Handled = key is not null && key != " " && !IsModifierKey(key);
             Observe(engine.KeyDownAsync(key ?? e.KeySymbol ?? e.Key.ToString(), GetModifiers(e.KeyModifiers)));
         }
     }

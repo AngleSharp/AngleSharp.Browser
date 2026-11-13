@@ -69,6 +69,7 @@ public sealed partial class BrowserEngine : IDisposable
     private readonly NavigationHistory _history = new();
     private readonly BrowserDiagnostics _diagnostics = new();
     private readonly Timer _heartbeat;
+    private readonly string[] _schemes;
     private MutationObserver? _observer;
     private IDocument? _document;
     private IEventLoop? _eventLoop;
@@ -165,6 +166,14 @@ public sealed partial class BrowserEngine : IDisposable
         // like in a browser, a script moving through the history continues before anything happens
         _history.TraversalRequested += delta => _ = Task.Run(() => TraverseAsync(delta, CancellationToken.None));
         _history.Changed += OnStateChanged;
+
+        // the host's own schemes come first, as the requesters are asked in order
+        _schemes = [.. options.SchemeHandlers.Keys];
+
+        if (_schemes.Length > 0)
+        {
+            config = config.With(new SchemeRequester(options.SchemeHandlers));
+        }
 
         if (options.Configure is not null)
         {
@@ -319,6 +328,11 @@ public sealed partial class BrowserEngine : IDisposable
     }
 
     /// <summary>
+    /// Gets the custom schemes the engine answers; see <see cref="BrowserOptions.SchemeHandlers"/>.
+    /// </summary>
+    public IReadOnlyList<string> Schemes => _schemes;
+
+    /// <summary>
     /// Gets the width of the viewport in CSS pixels.
     /// </summary>
     public int ViewportWidth => _device.ViewPortWidth;
@@ -338,13 +352,29 @@ public sealed partial class BrowserEngine : IDisposable
     /// </summary>
     /// <param name="address">The address as entered by the user.</param>
     /// <returns>The address to navigate to.</returns>
-    public static string NormalizeAddress(string? address)
+    public static string NormalizeAddress(string? address) => NormalizeAddress(address, []);
+
+    /// <summary>
+    /// Turns user input from an address bar into an absolute address, which keeps addresses
+    /// of the given custom schemes (see <see cref="BrowserOptions.SchemeHandlers"/>) as they are.
+    /// </summary>
+    /// <param name="address">The address as entered by the user.</param>
+    /// <param name="schemes">The custom schemes, e.g., "app" for "app:settings".</param>
+    /// <returns>The address to navigate to.</returns>
+    public static string NormalizeAddress(string? address, IEnumerable<string> schemes)
     {
         var trimmed = address?.Trim() ?? string.Empty;
 
         if (trimmed.Length == 0)
         {
             return "about:blank";
+        }
+
+        var colon = trimmed.IndexOf(':');
+
+        if (colon > 0 && schemes.Contains(trimmed[..colon], StringComparer.OrdinalIgnoreCase))
+        {
+            return trimmed;
         }
 
         if (Path.IsPathRooted(trimmed) && File.Exists(trimmed))
@@ -365,10 +395,10 @@ public sealed partial class BrowserEngine : IDisposable
     /// <summary>
     /// Navigates to the given address.
     /// </summary>
-    /// <param name="address">The address to load; see <see cref="NormalizeAddress"/>.</param>
+    /// <param name="address">The address to load; see <see cref="NormalizeAddress(string, IEnumerable{string})"/>.</param>
     /// <param name="cancellationToken">The token to cancel loading.</param>
     public Task NavigateAsync(string address, CancellationToken cancellationToken = default) =>
-        LoadAsync(NormalizeAddress(address), false, cancellationToken);
+        LoadAsync(NormalizeAddress(address, _schemes), false, cancellationToken);
 
     /// <summary>
     /// Loads the given HTML source as a document.
@@ -680,6 +710,7 @@ public sealed partial class BrowserEngine : IDisposable
             _observer = null;
             _document = active;
             _hovered = null;
+            _hoverChain = [];
             _pressed = null;
             _focusedFrameDocument = null;
             _hoveredFrames.Clear();
@@ -728,6 +759,8 @@ public sealed partial class BrowserEngine : IDisposable
     /// </summary>
     private async Task<T> RunEnteredAsync<T>(Func<T> action, CancellationToken cancellationToken)
     {
+        T result;
+
         try
         {
             // AngleSharp is not thread-safe; the event loop serializes the work with scripts. A task
@@ -745,19 +778,22 @@ public sealed partial class BrowserEngine : IDisposable
                     return default!;
                 }
             });
-            var result = await task.ConfigureAwait(false);
+            result = await task.ConfigureAwait(false);
 
             if (error is not null)
             {
                 ExceptionDispatchInfo.Throw(error);
             }
-
-            return result;
         }
         finally
         {
             _gate.Release();
         }
+
+        // this runs on the event loop, which the caller is not to continue on: what it does with
+        // the result (e.g. rasterizing a frame) would hold up the scripts
+        await Task.Yield();
+        return result;
     }
 
     private Task RunExclusiveAsync(Action action, CancellationToken cancellationToken = default) =>

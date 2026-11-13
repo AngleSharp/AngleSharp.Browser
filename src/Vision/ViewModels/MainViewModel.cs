@@ -10,24 +10,31 @@ using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using System.Diagnostics;
+using System.Collections.ObjectModel;
 using System.IO;
+using Vision.Models;
 using Vision.Pages;
 
 public partial class MainViewModel : ViewModelBase, IDisposable
 {
     private const string ApplicationName = "Vision";
+    private const int SuggestionCount = 8;
 
     private readonly IBrowserHost _host;
+    private readonly UrlHistory _history;
+    private string? _recordedUrl;
+    private bool _isShowingAddress;
     private HtmlPage? _panel;
     private string? _lastUrl;
     private int _isErrorCheckPending;
     private string? _iconUrl;
     private CancellationTokenSource? _iconLoading;
 
-    public MainViewModel(BrowserEngine engine, string startAddress, IBrowserHost host)
+    public MainViewModel(BrowserEngine engine, string startAddress, IBrowserHost host, UrlHistory? history = null)
     {
         Engine = engine;
-        Address = startAddress;
+        _history = history ?? new UrlHistory();
+        ShowAddress(startAddress);
         _host = host;
         engine.ColorScheme = host.ColorScheme;
         engine.StateChanged += (_, _) => Dispatcher.UIThread.Post(UpdateState);
@@ -98,6 +105,23 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     public partial BrowserEngine? PanelEngine { get; set; }
 
+    /// <summary>
+    /// Gets the addresses visited before, which match what is typed into the address bar.
+    /// </summary>
+    public ObservableCollection<UrlSuggestion> Suggestions { get; } = [];
+
+    /// <summary>
+    /// Gets if the address bar shows its suggestions.
+    /// </summary>
+    [ObservableProperty]
+    public partial bool IsSuggesting { get; set; }
+
+    /// <summary>
+    /// Gets the index of the suggestion chosen with the arrow keys, or -1 for what is typed.
+    /// </summary>
+    [ObservableProperty]
+    public partial int SelectedSuggestionIndex { get; set; } = -1;
+
     public bool HasStatus => Status.Length > 0;
 
     /// <summary>
@@ -113,11 +137,101 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         ClosePanel();
     }
 
+    /// <summary>
+    /// Moves the selection through the suggestions (from what is typed to the first one, and
+    /// back), if they are shown.
+    /// </summary>
+    /// <returns>If the suggestions handled the move.</returns>
+    public bool MoveSuggestion(int delta)
+    {
+        if (!IsSuggesting || Suggestions.Count == 0)
+        {
+            return false;
+        }
+
+        // -1 is what has been typed, which sits above the first suggestion
+        var count = Suggestions.Count + 1;
+        SelectedSuggestionIndex = ((SelectedSuggestionIndex + 1 + delta) % count + count) % count - 1;
+        return true;
+    }
+
+    /// <summary>
+    /// Hides the suggestions.
+    /// </summary>
+    /// <returns>If they were shown.</returns>
+    public bool CloseSuggestions()
+    {
+        var wasSuggesting = IsSuggesting;
+        IsSuggesting = false;
+        SelectedSuggestionIndex = -1;
+        Suggestions.Clear();
+        return wasSuggesting;
+    }
+
+    /// <summary>
+    /// Navigates to the given suggestion, e.g., when it was clicked.
+    /// </summary>
+    public Task NavigateToAsync(UrlSuggestion suggestion)
+    {
+        CloseSuggestions();
+        ShowAddress(suggestion.Url);
+        return Engine.NavigateAsync(suggestion.Url);
+    }
+
+    /// <summary>
+    /// Navigates to the chosen suggestion, else to what has been typed.
+    /// </summary>
     [RelayCommand]
     private Task NavigateAsync()
     {
-        Address = BrowserEngine.NormalizeAddress(Address);
+        if (IsSuggesting && SelectedSuggestionIndex >= 0 && SelectedSuggestionIndex < Suggestions.Count)
+        {
+            return NavigateToAsync(Suggestions[SelectedSuggestionIndex]);
+        }
+
+        CloseSuggestions();
+        ShowAddress(BrowserEngine.NormalizeAddress(Address, Engine.Schemes));
         return Engine.NavigateAsync(Address);
+    }
+
+    partial void OnAddressChanged(string value)
+    {
+        // only what the user types is looked up
+        if (!_isShowingAddress)
+        {
+            UpdateSuggestions(value);
+        }
+    }
+
+    private void UpdateSuggestions(string text)
+    {
+        var suggestions = _history.Suggest(text, SuggestionCount);
+        SelectedSuggestionIndex = -1;
+        Suggestions.Clear();
+
+        foreach (var suggestion in suggestions)
+        {
+            Suggestions.Add(suggestion);
+        }
+
+        IsSuggesting = Suggestions.Count > 0;
+    }
+
+    /// <summary>
+    /// Shows an address in the address bar, which is not looked up like a typed one.
+    /// </summary>
+    private void ShowAddress(string address)
+    {
+        _isShowingAddress = true;
+
+        try
+        {
+            Address = address;
+        }
+        finally
+        {
+            _isShowingAddress = false;
+        }
     }
 
     [RelayCommand(CanExecute = nameof(CanGoBack))]
@@ -215,12 +329,17 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         if (Engine.Url is string url && url != "about:blank" && url != _lastUrl)
         {
             _lastUrl = url;
-            Address = url;
+            CloseSuggestions();
+            ShowAddress(url);
         }
+
+        RecordVisit();
 
         var isSecure = Engine.Url?.StartsWith("https:", StringComparison.OrdinalIgnoreCase) ?? false;
         IsSecure = isSecure;
-        SiteInfo = isSecure ? "Connection is secure" : "Connection is not secure";
+        SiteInfo = isSecure ? "Connection is secure"
+            : Engine.Url?.StartsWith($"{VisionPages.Scheme}:", StringComparison.OrdinalIgnoreCase) ?? false ? "Vision's own page"
+            : "Connection is not secure";
         WindowTitle = string.IsNullOrWhiteSpace(Engine.Title) ? ApplicationName : $"{Engine.Title} - {ApplicationName}";
 
         if (Engine.IconUrl != _iconUrl)
@@ -234,6 +353,28 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         GoBackCommand.NotifyCanExecuteChanged();
         GoForwardCommand.NotifyCanExecuteChanged();
         UpdateStatus();
+    }
+
+    /// <summary>
+    /// Counts the visit of a page once it has loaded (also of an address a script pushed), and
+    /// keeps its title, which the suggestions show.
+    /// </summary>
+    private void RecordVisit()
+    {
+        if (Engine.IsLoading || Engine.Url is not string url)
+        {
+            return;
+        }
+
+        if (url != _recordedUrl)
+        {
+            _recordedUrl = url;
+            _history.Record(url, Engine.Title);
+        }
+        else
+        {
+            _history.SetTitle(url, Engine.Title);
+        }
     }
 
     /// <summary>

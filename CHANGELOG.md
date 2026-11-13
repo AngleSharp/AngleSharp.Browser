@@ -1,8 +1,14 @@
 # 0.2.0
 
-Released on tbd.
+Released on Friday, November 13 2026.
 
-- tbd
+- Fixed `BrowserView` not passing a modifier key pressed on its own (Control, Shift, Alt, Meta) to the page, e.g. a game firing on Control
+- Fixed callers of the engine (e.g. awaiting `PrepareFrameAsync` and rasterizing the frame without a synchronization context) continuing on the event loop, which held up the scripts of the page
+- Fixed the pointer not firing `mouseenter`/`mouseleave` (and `pointerenter`/`pointerleave`) and its events having no `relatedTarget`
+- Fixed the pointer events of the mouse having no `pointerType`, so that scripts took the mouse for touch (e.g. SmartMenus not opening menus on hover)
+- Added `BrowserOptions.SchemeHandlers` for custom URL schemes answered by the host
+- Added suggestions of previously visited addresses to the address bar of `Vision`, the most popular first
+- Added the `vision:` scheme to `Vision`, showing its own pages (e.g., `vision:settings`) or a list of them
 
 # 0.1.0
 
