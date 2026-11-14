@@ -139,6 +139,29 @@ public sealed class UrlHistory
     }
 
     /// <summary>
+    /// Finds the addresses visited most often (the most recently visited first among equally
+    /// popular ones), leaving out those the filter rejects, if any.
+    /// </summary>
+    public IReadOnlyList<UrlSuggestion> GetMostVisited(int count, Func<string, bool>? filter = null)
+    {
+        Entry[] entries;
+
+        lock (_lock)
+        {
+            entries = [.. _entries.Values];
+        }
+
+        return entries
+            .Where(m => filter?.Invoke(m.Url) ?? true)
+            .OrderByDescending(m => m.Visits)
+            .ThenByDescending(m => m.LastVisit)
+            .ThenBy(m => m.Url, StringComparer.Ordinal)
+            .Take(count)
+            .Select(m => new UrlSuggestion(m.Url, m.Title ?? string.Empty, m.Visits))
+            .ToList();
+    }
+
+    /// <summary>
     /// How similar two addresses are, from 0 (nothing in common) to 1 (the same): one minus
     /// the edits needed to turn one into the other (Levenshtein), relative to the longer one.
     /// </summary>

@@ -14,7 +14,7 @@ using System.Text.Json.Serialization;
 /// </summary>
 public sealed record BrowserSettings
 {
-    public const string DefaultStartPage = "https://me.florian-rappl.de";
+    public const string DefaultStartPage = "vision:start";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

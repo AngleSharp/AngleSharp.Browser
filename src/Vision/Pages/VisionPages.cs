@@ -11,6 +11,7 @@ using AngleSharp.Browser;
 using AngleSharp.Dom;
 using AngleSharp.Io;
 using Avalonia.Threading;
+using Vision.Models;
 using Vision.ViewModels;
 
 /// <summary>
@@ -27,12 +28,15 @@ public sealed class VisionPages : IDisposable
     /// </summary>
     public static IReadOnlyList<VisionPageInfo> Available { get; } =
     [
+        new("start", "Start", "The pages visited most, demos to try and the other pages of Vision."),
+        new("requester", "Requester", "Sends HTTP requests with the browser's requesters and shows their responses."),
         new("settings", "Settings", "Start page, privacy, appearance and network settings of new windows."),
         new("about", "About Vision", "The version of Vision, its components and contributors."),
         new("pages", "Vision pages", "The list of Vision's own pages."),
     ];
 
     private readonly IBrowserHost _host;
+    private readonly UrlHistory _history;
     private readonly Lock _lock = new();
     private readonly Dictionary<string, HtmlPage> _pending = new(StringComparer.Ordinal);
     private BrowserEngine? _engine;
@@ -40,9 +44,14 @@ public sealed class VisionPages : IDisposable
     private IDocument? _wired;
     private bool _isDisposed;
 
-    public VisionPages(IBrowserHost host)
+    /// <summary>
+    /// Creates the pages of a window, whose start page shows the most visited addresses of the
+    /// given history.
+    /// </summary>
+    public VisionPages(IBrowserHost host, UrlHistory? history = null)
     {
         _host = host;
+        _history = history ?? new UrlHistory();
     }
 
     public static string GetAddress(string name) => $"{Scheme}:{name}";
@@ -127,6 +136,8 @@ public sealed class VisionPages : IDisposable
     {
         "settings" => _host.CreateSettingsPage(Close),
         "about" => new AboutPage(_host.ColorScheme, Close),
+        "start" => new StartPage(_host.ColorScheme, _history.GetMostVisited(StartPage.MostVisitedCount, m => !IsPage(m))),
+        "requester" => new RequesterPage(_host.ColorScheme),
         _ => new PageListPage(_host.ColorScheme, name),
     };
 
@@ -179,7 +190,10 @@ public sealed class VisionPages : IDisposable
         page.Attach(_engine!, document);
     }
 
-    private static bool IsPage(string? url) => url?.StartsWith($"{Scheme}:", StringComparison.OrdinalIgnoreCase) ?? false;
+    /// <summary>
+    /// Gets if the address is one of the scheme.
+    /// </summary>
+    public static bool IsPage(string? url) => url?.StartsWith($"{Scheme}:", StringComparison.OrdinalIgnoreCase) ?? false;
 
     /// <summary>
     /// What the "Close" button of a page does in a window: back to where the user came from.

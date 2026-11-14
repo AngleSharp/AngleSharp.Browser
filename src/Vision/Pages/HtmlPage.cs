@@ -2,7 +2,9 @@ namespace Vision.Pages;
 
 using System;
 using AngleSharp.Browser;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
 using AngleSharp.Dom;
@@ -140,6 +142,40 @@ public abstract class HtmlPage : IDisposable
                 area.Value = value;
                 break;
         }
+    }
+
+    /// <summary>
+    /// Reads headers given as one "Name: value" per line (empty lines are skipped), or tells
+    /// which line is not one.
+    /// </summary>
+    protected static bool TryParseHeaders(string text, out Dictionary<string, string> headers, out string problem)
+    {
+        headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        problem = string.Empty;
+        var lines = text.Split('\n');
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i].Trim();
+
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            var separator = line.IndexOf(':');
+            var name = separator > 0 ? line[..separator].Trim() : string.Empty;
+
+            if (name.Length == 0 || name.Any(m => char.IsWhiteSpace(m) || char.IsControl(m) || m > 127))
+            {
+                problem = $"Header line {i + 1} has to look like \"Name: value\".";
+                return false;
+            }
+
+            headers[name] = line[(separator + 1)..].Trim();
+        }
+
+        return true;
     }
 
     protected static bool IsChecked(IDocument document, string id) =>

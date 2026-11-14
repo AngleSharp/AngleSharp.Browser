@@ -1,0 +1,144 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Start</title>
+<style>
+{{styles}}
+
+html,
+body {
+  background: var(--surface);
+}
+
+.page {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 36px 24px 24px;
+}
+
+.intro {
+  margin-bottom: 24px;
+  text-align: center;
+}
+
+.intro h1 {
+  font-size: 28px;
+  font-weight: 500;
+}
+
+.intro p {
+  margin: 4px 0 0;
+}
+
+.section {
+  margin-bottom: 24px;
+}
+
+.section h2 {
+  margin-bottom: 10px;
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.tiles {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 0 -6px;
+}
+
+.tile {
+  display: flex;
+  box-sizing: border-box;
+  width: 268px;
+  margin: 0 6px 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.tile:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.tile .letter {
+  display: block;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  margin-right: 12px;
+  border-radius: 18px;
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 36px;
+  text-align: center;
+}
+
+.tile .text {
+  display: block;
+  flex: 1;
+  min-width: 0;
+}
+
+.tile .name,
+.tile .address {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tile .name {
+  font-weight: 600;
+}
+
+.tile .address {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.tile .description {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.section .empty {
+  margin: 0;
+  padding: 18px;
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  text-align: left;
+}
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="intro">
+      <h1>Vision</h1>
+      <p class="muted">A browser made of AngleSharp. Type an address above, or pick a page to start with.</p>
+    </div>
+
+    <div class="section">
+      <h2>Most visited</h2>
+      <div class="tiles" id="most-visited">{{most-visited}}</div>
+    </div>
+
+    <div class="section">
+      <h2>Demos</h2>
+      <div class="tiles" id="demos">{{demos}}</div>
+    </div>
+
+    <div class="section">
+      <h2>Vision</h2>
+      <div class="tiles" id="pages">{{pages}}</div>
+    </div>
+  </div>
+</body>
+</html>

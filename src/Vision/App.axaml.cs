@@ -196,7 +196,8 @@ public partial class App : Application, IBrowserHost
         options.ColorScheme = ColorScheme;
 
         // the browser's own pages (vision:settings, ...) are shown by the window like any page
-        var pages = new VisionPages(this);
+        var history = GetHistory(options.ProfileDirectory);
+        var pages = new VisionPages(this, history);
         options.SchemeHandlers[VisionPages.Scheme] = pages.HandleAsync;
 
         // in-memory profiles are only shared with the opener, a directory with any window using it
@@ -223,7 +224,7 @@ public partial class App : Application, IBrowserHost
 
         var entry = new BrowserWindow(window, engine, options.ProfileDirectory);
         pages.Attach(engine);
-        var viewModel = new MainViewModel(engine, address ?? _settings.StartPage, this, GetHistory(options.ProfileDirectory));
+        var viewModel = new MainViewModel(engine, address ?? _settings.StartPage, this, history);
 
         engine.WindowRequested += (_, request) =>
         {

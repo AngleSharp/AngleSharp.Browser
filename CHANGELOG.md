@@ -9,6 +9,8 @@ Released on Friday, November 13 2026.
 - Added `BrowserOptions.SchemeHandlers` for custom URL schemes answered by the host
 - Added suggestions of previously visited addresses to the address bar of `Vision`, the most popular first
 - Added the `vision:` scheme to `Vision`, showing its own pages (e.g., `vision:settings`) or a list of them
+- Added the start page `vision:start` to `Vision` (its new default start page), with the most visited pages, demos and Vision's own pages
+- Added the requester `vision:requester` to `Vision`, which sends HTTP requests with the requesters of the window and shows their responses
 
 # 0.1.0
 

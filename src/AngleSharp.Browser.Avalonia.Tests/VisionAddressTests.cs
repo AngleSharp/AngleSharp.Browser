@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
 using System.Threading.Tasks;
 using AngleSharp.Dom;
 using AngleSharp.Html.Dom;
@@ -174,6 +176,145 @@ public class VisionAddressTests
         pages.Dispose();
     }
 
+    [AvaloniaTest]
+    public async Task TheStartPageShowsTheMostVisitedPagesDemosAndVisionPages()
+    {
+        var history = new UrlHistory();
+        Visit(history, "vision:settings", 9);
+
+        for (var i = 1; i <= 7; i++)
+        {
+            Visit(history, $"https://example.org/{i}", i);
+        }
+
+        history.SetTitle("https://example.org/7", "Seven");
+        var host = new TestHost();
+        using var engine = CreateEngine(host, out var pages, history);
+
+        await engine.NavigateAsync("vision:start");
+
+        var (visited, demos, vision, heading) = await engine.InvokeAsync(d => (
+            d!.QuerySelectorAll("#most-visited a").Select(m => m.GetAttribute("href")).ToArray(),
+            d.QuerySelectorAll("#demos a").Select(m => m.GetAttribute("href")).ToArray(),
+            d.QuerySelectorAll("#pages a").Select(m => m.GetAttribute("href")).ToArray(),
+            d.QuerySelector("#most-visited .name")!.TextContent));
+        // the pages of Vision have their own section
+        Assert.That(visited, Is.EqualTo(new[] { "https://example.org/7", "https://example.org/6", "https://example.org/5", "https://example.org/4", "https://example.org/3" }));
+        Assert.That(heading, Is.EqualTo("Seven"));
+        Assert.That(demos, Has.Length.EqualTo(5));
+        Assert.That(demos, Does.Contain("https://news.ycombinator.com"));
+        Assert.That(vision, Is.EqualTo(new[] { "vision:requester", "vision:settings", "vision:about" }));
+        Assert.That(BrowserSettings.DefaultStartPage, Is.EqualTo("vision:start"));
+        pages.Dispose();
+    }
+
+    [AvaloniaTest]
+    public async Task TheStartPageWithoutAHistoryTellsWhatWillBeThere()
+    {
+        var host = new TestHost();
+        using var engine = CreateEngine(host, out var pages);
+
+        await engine.NavigateAsync("vision:start");
+
+        var empty = await engine.InvokeAsync(d => d!.QuerySelector("#most-visited .empty")?.TextContent);
+        Assert.That(empty, Does.Contain("visit most"));
+        pages.Dispose();
+    }
+
+    [AvaloniaTest]
+    public async Task TheRequesterSendsWithTheRequestersOfTheEngine()
+    {
+        var host = new TestHost();
+        using var engine = CreateEngine(host, out var pages);
+
+        await engine.NavigateAsync("vision:requester");
+        await WaitUntil(engine, d => d?.QuerySelectorAll("#requester option").Length > 1);
+
+        // the browser's own pages come from a requester as well
+        await engine.InvokeAsync(d =>
+        {
+            ((IHtmlInputElement)d!.GetElementById("url")!).Value = "vision:about";
+            ((IHtmlElement)d.GetElementById("send")!).DoClick();
+        });
+        await WaitUntil(engine, d => d!.GetElementById("response-status")!.TextContent == "200 OK");
+
+        var (body, headers, requester) = await engine.InvokeAsync(d => (
+            d!.GetElementById("body-text")!.TextContent,
+            d.GetElementById("headers-list")!.TextContent,
+            d.GetElementById("response-info")!.TextContent));
+        Assert.That(body, Does.Contain("<title>About"));
+        Assert.That(headers, Does.Contain("text/html"));
+        Assert.That(requester, Does.EndWith("Scheme"));
+        pages.Dispose();
+    }
+
+    [AvaloniaTest]
+    public async Task TheRequesterPostsABodyWithTheDefaultHeaders()
+    {
+        using var listener = new HttpListener();
+        var port = GetFreePort();
+        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+        listener.Start();
+        var received = Task.Run(async () =>
+        {
+            var context = await listener.GetContextAsync();
+            using var reader = new StreamReader(context.Request.InputStream);
+            var request = (context.Request.HttpMethod, Body: await reader.ReadToEndAsync(), Type: context.Request.ContentType, Test: context.Request.Headers["X-Test"]);
+            context.Response.ContentType = "application/json";
+            var answer = System.Text.Encoding.UTF8.GetBytes("{\"ok\":true}");
+            await context.Response.OutputStream.WriteAsync(answer);
+            context.Response.Close();
+            return request;
+        });
+        var host = new TestHost();
+        var options = new BrowserOptions { ProfileDirectory = null, ViewportWidth = 800, ViewportHeight = 600 };
+        options.DefaultHeaders["X-Test"] = "default";
+        using var engine = CreateEngine(host, out var pages, options: options);
+
+        await engine.NavigateAsync("vision:requester");
+        await WaitUntil(engine, d => d?.QuerySelectorAll("#requester option").Length > 1);
+        await engine.InvokeAsync(d =>
+        {
+            ((IHtmlSelectElement)d!.GetElementById("method")!).Value = "Post";
+            ((IHtmlInputElement)d.GetElementById("url")!).Value = $"http://127.0.0.1:{port}/echo";
+            ((IHtmlTextAreaElement)d.GetElementById("body")!).Value = "{\"name\":\"Vision\"}";
+            ((IHtmlElement)d.GetElementById("send")!).DoClick();
+        });
+        await WaitUntil(engine, d => d!.GetElementById("response-status")!.TextContent == "200 OK");
+
+        var request = await received;
+        Assert.That(request.HttpMethod, Is.EqualTo("POST"));
+        Assert.That(request.Body, Is.EqualTo("{\"name\":\"Vision\"}"));
+        Assert.That(request.Type, Does.StartWith("application/json"));
+        Assert.That(request.Test, Is.EqualTo("default"));
+        // JSON is shown indented, and what was sent includes the default headers
+        var (body, sent) = await engine.InvokeAsync(d => (
+            d!.GetElementById("body-text")!.TextContent,
+            d.GetElementById("request-headers")!.TextContent));
+        Assert.That(body, Does.Contain("\"ok\": true"));
+        Assert.That(sent, Does.Contain("X-Test"));
+        pages.Dispose();
+    }
+
+    [AvaloniaTest]
+    public async Task TheRequesterTellsWhatIsWrongWithARequest()
+    {
+        var host = new TestHost();
+        using var engine = CreateEngine(host, out var pages);
+
+        await engine.NavigateAsync("vision:requester");
+        await WaitUntil(engine, d => d?.QuerySelectorAll("#requester option").Length > 1);
+        await engine.InvokeAsync(d =>
+        {
+            ((IHtmlTextAreaElement)d!.GetElementById("body")!).Value = "text";
+            ((IHtmlElement)d.GetElementById("send")!).DoClick();
+        });
+
+        var status = await engine.InvokeAsync(d => d!.GetElementById("status")!.TextContent);
+        Assert.That(status, Does.Contain("GET request has no body"));
+        pages.Dispose();
+    }
+
     [TestCase("vision:settings", "settings")]
     [TestCase("vision://About/", "about")]
     [TestCase("vision:settings?x=1#y", "settings")]
@@ -191,14 +332,23 @@ public class VisionAddressTests
         }
     }
 
-    private static BrowserEngine CreateEngine(IBrowserHost host, out VisionPages pages)
+    private static BrowserEngine CreateEngine(IBrowserHost host, out VisionPages pages, UrlHistory? history = null, BrowserOptions? options = null)
     {
-        var options = new BrowserOptions { ProfileDirectory = null, ViewportWidth = 800, ViewportHeight = 600 };
-        pages = new VisionPages(host);
+        options ??= new BrowserOptions { ProfileDirectory = null, ViewportWidth = 800, ViewportHeight = 600 };
+        pages = new VisionPages(host, history);
         options.SchemeHandlers[VisionPages.Scheme] = pages.HandleAsync;
         var engine = new BrowserEngine(options);
         pages.Attach(engine);
         return engine;
+    }
+
+    private static int GetFreePort()
+    {
+        var socket = new TcpListener(IPAddress.Loopback, 0);
+        socket.Start();
+        var port = ((IPEndPoint)socket.LocalEndpoint).Port;
+        socket.Stop();
+        return port;
     }
 
     private static async Task WaitUntil(BrowserEngine engine, Func<IDocument?, bool> condition)
