@@ -18,6 +18,7 @@ using AngleSharp.Html.Parser;
 using AngleSharp.Io;
 using AngleSharp.Io.Cookie;
 using AngleSharp.Js;
+using AngleSharp.Media;
 using AngleSharp.Renderer;
 using AngleSharp.Scripting;
 using AngleSharp.Renderer.Rendering;
@@ -68,7 +69,10 @@ public sealed partial class BrowserEngine : IDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly NavigationHistory _history = new();
     private readonly BrowserDiagnostics _diagnostics = new();
+    private readonly MediaHost _media;
     private readonly Timer _heartbeat;
+    // the next frame of an animated image shown (see ScheduleImageFrame)
+    private readonly Timer _imageFrameTimer;
     private readonly string[] _schemes;
     private MutationObserver? _observer;
     private IDocument? _document;
@@ -103,6 +107,8 @@ public sealed partial class BrowserEngine : IDisposable
     private BrowserEngine(BrowserOptions options, BrowserEngine? opener)
     {
         _options = options;
+        _media = new MediaHost(options);
+        _media.Changed += OnMediaChanged;
 
         _device = new DefaultRenderDevice
         {
@@ -142,7 +148,9 @@ public sealed partial class BrowserEngine : IDisposable
             .WithDefaultLoader(new LoaderOptions
             {
                 IsResourceLoadingEnabled = true,
-            });
+            })
+            // audio plays on the host's output (see BrowserOptions.AudioOutput)
+            .With<IResourceService<IAudioInfo>>(context => new AudioResourceService(_media, context));
 
         if (options.IsScriptingEnabled)
         {
@@ -235,9 +243,11 @@ public sealed partial class BrowserEngine : IDisposable
             }
         });
         _harness = _context.GetDomHarness();
+        _harness.IsTextSelectionEnabled = options.IsTextSelectionEnabled;
         _loop = _context.GetService<IEventLoop>();
         _harness.PaintInvalidated += OnPaintInvalidated;
         _heartbeat = new Timer(OnHeartbeat, null, HeartbeatInterval, HeartbeatInterval);
+        _imageFrameTimer = new Timer(OnImageFrameDue);
     }
 
     /// <summary>
@@ -532,6 +542,7 @@ public sealed partial class BrowserEngine : IDisposable
         {
             _isDisposed = true;
             _heartbeat.Dispose();
+            _imageFrameTimer.Dispose();
 
             lock (_scrollLock)
             {
@@ -541,6 +552,8 @@ public sealed partial class BrowserEngine : IDisposable
 
             _harness.PaintInvalidated -= OnPaintInvalidated;
             _observer?.Disconnect();
+            _media.Changed -= OnMediaChanged;
+            _media.StopAll();
             _context.Dispose();
         }
     }
@@ -712,11 +725,15 @@ public sealed partial class BrowserEngine : IDisposable
             _hovered = null;
             _hoverChain = [];
             _pressed = null;
+            _seekingMedia = null;
             _focusedFrameDocument = null;
             _hoveredFrames.Clear();
             _pointerFrame = null;
             _wasReadyForLayout = false;
             ResetScrollPosition();
+            // the media of the previous document stops, and a new one has to be activated anew
+            _media.HasUserActivation = false;
+            _media.StopDetached();
 
             if (active is not null)
             {
@@ -826,8 +843,8 @@ public sealed partial class BrowserEngine : IDisposable
 
         if (Environment.TickCount64 < Volatile.Read(ref _animateUntil))
         {
-            // the last frame is checked for changes, it is laid out anew only if it animates
-            Invalidate(isMutation: !_isLastFrameAnimating);
+            // the last frame is checked for changes (also of its animations, see TryReuseLastFrame)
+            Invalidate(isMutation: true);
         }
     }
 

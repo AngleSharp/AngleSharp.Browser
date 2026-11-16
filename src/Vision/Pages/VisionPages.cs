@@ -37,6 +37,7 @@ public sealed class VisionPages : IDisposable
 
     private readonly IBrowserHost _host;
     private readonly UrlHistory _history;
+    private readonly SavedRequests _requests;
     private readonly Lock _lock = new();
     private readonly Dictionary<string, HtmlPage> _pending = new(StringComparer.Ordinal);
     private BrowserEngine? _engine;
@@ -46,12 +47,13 @@ public sealed class VisionPages : IDisposable
 
     /// <summary>
     /// Creates the pages of a window, whose start page shows the most visited addresses of the
-    /// given history.
+    /// given history and whose requester keeps the given saved requests.
     /// </summary>
-    public VisionPages(IBrowserHost host, UrlHistory? history = null)
+    public VisionPages(IBrowserHost host, UrlHistory? history = null, SavedRequests? requests = null)
     {
         _host = host;
         _history = history ?? new UrlHistory();
+        _requests = requests ?? new SavedRequests();
     }
 
     public static string GetAddress(string name) => $"{Scheme}:{name}";
@@ -137,7 +139,7 @@ public sealed class VisionPages : IDisposable
         "settings" => _host.CreateSettingsPage(Close),
         "about" => new AboutPage(_host.ColorScheme, Close),
         "start" => new StartPage(_host.ColorScheme, _history.GetMostVisited(StartPage.MostVisitedCount, m => !IsPage(m))),
-        "requester" => new RequesterPage(_host.ColorScheme),
+        "requester" => new RequesterPage(_host.ColorScheme, _requests),
         _ => new PageListPage(_host.ColorScheme, name),
     };
 

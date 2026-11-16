@@ -46,6 +46,8 @@ public abstract class HtmlPage : IDisposable
                     ProfileDirectory = null,
                     IsScriptingEnabled = false,
                     ColorScheme = _colorScheme,
+                    // e.g. for copying an error or a request out of the diagnostics
+                    IsTextSelectionEnabled = true,
                 });
             }
 

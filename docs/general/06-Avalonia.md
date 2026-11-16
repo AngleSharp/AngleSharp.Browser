@@ -93,7 +93,7 @@ Engine events may be raised on any thread, so they are dispatched here. To open 
 
 ## Input Handling
 
-The control has to be focused to get keyboard input; clicking it does that. Shortcuts with Control or Alt stay unhandled, so `KeyBinding`s of the window work while the page is focused. Control+V pastes into the focused text field, and the extra mouse buttons go back and forward in the history.
+The control has to be focused to get keyboard input; clicking it does that. Shortcuts with Control or Alt stay unhandled, so `KeyBinding`s of the window work while the page is focused. Control+V pastes into the focused text field, Control+C copies the selected text and Control+A selects all of it (with `BrowserOptions.IsTextSelectionEnabled`), and the extra mouse buttons go back and forward in the history.
 
 ## Namespace Hint
 

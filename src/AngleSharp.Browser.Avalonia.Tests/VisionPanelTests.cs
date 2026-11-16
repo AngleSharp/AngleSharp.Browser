@@ -52,6 +52,24 @@ public class VisionPanelTests
     }
 
     [AvaloniaTest]
+    public async Task TheTextOfAPanelCanBeSelectedButNotItsTabs()
+    {
+        await _target.LoadHtmlAsync(Page);
+        using var page = new InspectorPage("light", _target);
+        await page.LoadAsync();
+        await WaitUntil(page, d => FindRow(d, "h1") is not null);
+        await page.Engine.PrepareFrameAsync();
+        await page.Engine.PrepareFrameAsync();
+
+        await page.Engine.KeyDownAsync("a", InputModifiers.Control);
+        var all = await page.Engine.CopySelectionAsync();
+        var tabs = await page.Engine.InvokeAsync(d => d!.QuerySelector(".tab")!.TextContent.Trim());
+
+        Assert.That(all, Does.Contain("h1"));
+        Assert.That(all, Does.Not.Contain(tabs));
+    }
+
+    [AvaloniaTest]
     public async Task SelectingAnElementShowsItsAttributesRulesAndComputedStyle()
     {
         await _target.LoadHtmlAsync(Page);

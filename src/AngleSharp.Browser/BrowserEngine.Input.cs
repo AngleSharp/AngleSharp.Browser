@@ -155,9 +155,23 @@ partial class BrowserEngine
     /// <param name="modifiers">The held modifier keys.</param>
     /// <param name="cancellationToken">The token to cancel waiting for the engine.</param>
     public Task PointerDownAsync(double x, double y, InputModifiers modifiers = InputModifiers.None, CancellationToken cancellationToken = default) =>
+        PointerDownAsync(x, y, 1, modifiers, cancellationToken);
+
+    /// <summary>
+    /// Presses the primary pointer button at the given viewport position, the given time in a
+    /// row (e.g., 2 for the second press of a double click, which selects a word).
+    /// </summary>
+    /// <param name="x">The horizontal position in CSS pixels.</param>
+    /// <param name="y">The vertical position in CSS pixels.</param>
+    /// <param name="clickCount">The number of successive presses, at least 1.</param>
+    /// <param name="modifiers">The held modifier keys.</param>
+    /// <param name="cancellationToken">The token to cancel waiting for the engine.</param>
+    public Task PointerDownAsync(double x, double y, int clickCount, InputModifiers modifiers = InputModifiers.None, CancellationToken cancellationToken = default) =>
         RunExclusiveAsync(() =>
         {
             var popup = _selectPopup;
+            // a press is the user activating the page (e.g. letting it play audio)
+            _media.HasUserActivation = true;
 
             // a press on the popup is for the popup alone, one elsewhere closes it
             if (popup is not null && popup.View.Contains(x, y))
@@ -189,12 +203,24 @@ partial class BrowserEngine
                         // a press on the select that is open just closed it
                         ShowSelectPopup((IHtmlSelectElement)target);
                     }
+                    else if (PressMediaControls(target, x, y))
+                    {
+                    }
+                    else if (!IsDropdown(target))
+                    {
+                        BeginTextSelection(hit, x, y, Math.Max(1, clickCount), modifiers);
+                    }
                 }
             }
             else if (hit is not null)
             {
                 // something disabled takes no events, but a press on it still moves the focus
                 UpdateFocus(hit);
+            }
+            else
+            {
+                // a press next to the page removes the selection
+                BeginTextSelection(null, x, y, 1, InputModifiers.None);
             }
         }, cancellationToken);
 
@@ -226,6 +252,8 @@ partial class BrowserEngine
                 return null;
             }
 
+            EndTextSelection();
+            _seekingMedia = null;
             var target = ResolveListBoxTarget(HitTest(x, y), x, y);
             var pressed = _pressed;
             _pressed = null;
@@ -348,7 +376,12 @@ partial class BrowserEngine
     /// <param name="cancellationToken">The token to cancel waiting for the engine.</param>
     public async Task KeyDownAsync(string key, InputModifiers modifiers = InputModifiers.None, CancellationToken cancellationToken = default)
     {
-        var navigation = await RunExclusiveAsync(() => HandleKeyDown(key, modifiers), cancellationToken).ConfigureAwait(false);
+        var navigation = await RunExclusiveAsync(() =>
+        {
+            // like a press, other than Escape (HTML 6.4.3)
+            _media.HasUserActivation |= key != "Escape";
+            return HandleKeyDown(key, modifiers);
+        }, cancellationToken).ConfigureAwait(false);
 
         if (navigation is not null)
         {
@@ -458,6 +491,16 @@ partial class BrowserEngine
             _hovered = element;
             _hoverChain = chain;
             KeepAnimating(InteractionDuration);
+        }
+
+        if (isMove && _selecting is not null)
+        {
+            ExtendTextSelection(x, y);
+        }
+
+        if (isMove)
+        {
+            SeekMedia(x);
         }
 
         if (element is not null && isMove)
@@ -848,6 +891,9 @@ partial class BrowserEngine
 
         switch (key)
         {
+            case "a" or "A" when !isTextEntry && (modifiers.HasFlag(InputModifiers.Control) || modifiers.HasFlag(InputModifiers.Meta)):
+                SelectAllText();
+                return null;
             case "Tab":
                 MoveFocus(modifiers.HasFlag(InputModifiers.Shift) ? -1 : 1);
                 return null;

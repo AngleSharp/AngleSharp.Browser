@@ -58,6 +58,7 @@ The following APIs cover most day-to-day tasks:
 | `InvokeAsync(action)` | Runs code on the event loop, and returns its value. |
 | `MovePointer`, `MovePointerAsync`, `PointerDownAsync`, `PointerUpAsync`, `ClickAsync` | Pointer input. |
 | `KeyDownAsync`, `KeyUpAsync`, `TextInputAsync` | Keyboard input. |
+| `CopySelectionAsync()` | Gets the selected text for the clipboard. |
 | `ScrollAsync(deltaX, deltaY)`, `ScrollToAsync(top, animate)` | Scrolling. |
 | `CreateWindow()`, `CreateWindow(options)` | Creates an engine sharing the profile. |
 | `LoadIconAsync()`, `GetCertificate(host)` | Loads the page's icon, or gets the certificate of a host. |

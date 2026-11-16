@@ -16,14 +16,17 @@ using AngleSharp;
 using AngleSharp.Browser;
 using AngleSharp.Dom;
 using AngleSharp.Html.Dom;
+using AngleSharp.Html.Dom.Events;
 using AngleSharp.Io;
+using Vision.Models;
 
 /// <summary>
 /// A playground for the requesters of the browser (vision:requester): sends a request with one
 /// of them, like the engine of the window does for its pages (with its user agent, default
-/// headers and, if wanted, its cookies), and shows the response.
+/// headers and, if wanted, its cookies), and shows the response. Requests can be saved under a
+/// name and restored later.
 /// </summary>
-public sealed class RequesterPage(string? colorScheme) : HtmlPage("requester", colorScheme)
+public sealed class RequesterPage(string? colorScheme, SavedRequests saved) : HtmlPage("requester", colorScheme)
 {
     /// <summary>
     /// The most of a response's body read, beyond it the rest is left out.
@@ -42,12 +45,15 @@ public sealed class RequesterPage(string? colorScheme) : HtmlPage("requester", c
 
     private IRequester[] _requesters = [];
     private CancellationTokenSource? _sending;
+    private IDocument? _document;
+    private string? _active;
     private bool _isDisposed;
 
     public override void Dispose()
     {
         _isDisposed = true;
         _sending?.Cancel();
+        saved.Changed -= OnSavedChanged;
         base.Dispose();
     }
 
@@ -57,6 +63,7 @@ public sealed class RequesterPage(string? colorScheme) : HtmlPage("requester", c
 
     protected override void Wire(IDocument document)
     {
+        _document = document;
         // the requesters are asked in order, the first one supporting the scheme is used
         _requesters = [.. Engine.Context.GetServices<IRequester>()];
         var options = new StringBuilder("""<option value="auto">Automatic</option>""");
@@ -67,34 +74,199 @@ public sealed class RequesterPage(string? colorScheme) : HtmlPage("requester", c
         }
 
         document.GetElementById("requester")!.InnerHtml = options.ToString();
+        ShowSaved(document);
+        // other windows of the profile may save requests as well
+        saved.Changed += OnSavedChanged;
 
         foreach (var tab in Tabs)
         {
             OnClick(document, $"tab-{tab}", () => ShowTab(document, tab));
         }
 
-        OnClick(document, "send", () =>
+        document.GetElementById("method")?.AddEventListener("change", (_, _) => ShowMethod(document));
+        OnClick(document, "send", () => Send(document));
+        OnClick(document, "save", () => Save(document));
+        OnEnter(document, "url", () => Send(document));
+        OnEnter(document, "name", () => Save(document));
+        document.GetElementById("saved")?.AddEventListener("click", (_, ev) =>
         {
-            if (_sending is { } sending)
+            // one listener for the whole list, which is replaced whenever it changes
+            if (ev.OriginalTarget is IElement target && target.Closest("[data-name]") is { } item && item.GetAttribute("data-name") is { } name)
             {
-                sending.Cancel();
-                return;
+                if (target.Closest(".remove") is not null)
+                {
+                    Delete(document, name);
+                }
+                else
+                {
+                    Restore(document, name);
+                }
             }
-
-            if (!TryCreateRequest(document, out var request, out var requester, out var problem))
-            {
-                ShowStatus(document, problem, "invalid");
-                return;
-            }
-
-            var cancellation = new CancellationTokenSource();
-            var useCookies = IsChecked(document, "cookies");
-            _sending = cancellation;
-            SetSending(document, true);
-            ShowStatus(document, $"Sending with {GetName(requester)}...", null);
-            _ = Task.Run(() => SendAsync(document, requester, request, useCookies, cancellation));
         });
     }
+
+    private void Send(IDocument document)
+    {
+        if (_sending is { } sending)
+        {
+            sending.Cancel();
+            return;
+        }
+
+        if (!TryCreateRequest(document, out var request, out var requester, out var problem))
+        {
+            ShowStatus(document, problem, "invalid");
+            return;
+        }
+
+        var cancellation = new CancellationTokenSource();
+        var useCookies = IsChecked(document, "cookies");
+        _sending = cancellation;
+        SetSending(document, true);
+        ShowStatus(document, $"Sending with {GetName(requester)}...", null);
+        _ = Task.Run(() => SendAsync(document, requester, request, useCookies, cancellation));
+    }
+
+    /// <summary>
+    /// Saves what the form shows under the name given (or one made of the method and address).
+    /// </summary>
+    private void Save(IDocument document)
+    {
+        var url = GetValue(document, "url").Trim();
+
+        if (url.Length == 0)
+        {
+            ShowStatus(document, "Enter the address of the request to save it.", "invalid");
+            return;
+        }
+
+        var method = GetSelected(document, "method");
+        var name = GetValue(document, "name").Trim();
+
+        if (name.Length == 0)
+        {
+            name = $"{method.ToUpperInvariant()} {GetShortAddress(url)}";
+        }
+
+        var choice = GetSelected(document, "requester");
+        var requester = int.TryParse(choice, NumberStyles.None, CultureInfo.InvariantCulture, out var index) && index < _requesters.Length
+            ? GetName(_requesters[index])
+            : null;
+        var replaces = saved.Find(name) is not null;
+        _active = name;
+        saved.Save(new SavedRequest(
+            name,
+            method,
+            url,
+            GetValue(document, "headers"),
+            GetValue(document, "body"),
+            requester,
+            IsChecked(document, "cookies")));
+        SetValue(document, "name", name);
+        ShowStatus(document, replaces ? $"Updated \"{name}\"." : $"Saved \"{name}\".", "saved");
+    }
+
+    /// <summary>
+    /// Fills the form with the saved request of the given name.
+    /// </summary>
+    private void Restore(IDocument document, string name)
+    {
+        if (saved.Find(name) is not { } request)
+        {
+            return;
+        }
+
+        var requester = Array.FindIndex(_requesters, m => GetName(m) == request.Requester);
+        SetSelected(document, "method", Methods.Any(m => m.ToString() == request.Method) ? request.Method : nameof(HttpMethod.Get));
+        SetSelected(document, "requester", requester >= 0 ? requester.ToString(CultureInfo.InvariantCulture) : "auto");
+        SetValue(document, "url", request.Url);
+        SetValue(document, "headers", request.Headers);
+        SetValue(document, "body", request.Body);
+        SetValue(document, "name", request.Name);
+        SetChecked(document, "cookies", request.UseCookies);
+        ShowMethod(document);
+        _active = request.Name;
+        ShowSaved(document);
+        ShowStatus(document, request.Requester is not null && requester < 0
+            ? $"Restored \"{request.Name}\", but its requester ({request.Requester}) is not there: it goes to the automatic one."
+            : $"Restored \"{request.Name}\".", null);
+    }
+
+    private void Delete(IDocument document, string name)
+    {
+        if (saved.Remove(name))
+        {
+            if (string.Equals(_active, name, StringComparison.OrdinalIgnoreCase))
+            {
+                _active = null;
+            }
+
+            ShowStatus(document, $"Deleted \"{name}\".", null);
+        }
+    }
+
+    /// <summary>
+    /// Raised on any thread: the list is drawn again on the event loop.
+    /// </summary>
+    private void OnSavedChanged(object? sender, EventArgs e)
+    {
+        if (!_isDisposed && _document is { } document)
+        {
+            try
+            {
+                _ = Engine.InvokeAsync(_ => ShowSaved(document));
+            }
+            catch (ObjectDisposedException)
+            {
+                // the window was closed meanwhile
+            }
+        }
+    }
+
+    private void ShowSaved(IDocument document)
+    {
+        var requests = saved.All;
+        var items = new StringBuilder();
+
+        foreach (var request in requests)
+        {
+            var method = request.Method.ToUpperInvariant();
+            var active = string.Equals(request.Name, _active, StringComparison.OrdinalIgnoreCase) ? " active" : string.Empty;
+            items.Append($"""<div class="item{active}" data-name="{Encode(request.Name)}" title="{Encode(request.Url)}">""");
+            items.Append($"""<span class="verb {method.ToLowerInvariant()}">{Encode(method)}</span>""");
+            items.Append($"""<span class="text"><span class="name">{Encode(request.Name)}</span><span class="url">{Encode(GetShortAddress(request.Url))}</span></span>""");
+            items.Append("""<button type="button" class="remove" title="Delete">×</button></div>""");
+        }
+
+        document.GetElementById("saved")!.InnerHtml = items.Length > 0
+            ? items.ToString()
+            : """<div class="none">Name a request and save it to find it here.</div>""";
+        document.GetElementById("saved-count")!.TextContent = requests.Count.ToString(CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// Colors the method's field like its badges in the list.
+    /// </summary>
+    private static void ShowMethod(IDocument document)
+    {
+        if (document.GetElementById("method") is { } method)
+        {
+            method.ClassName = $"method {GetSelected(document, "method").ToLowerInvariant()}";
+        }
+    }
+
+    /// <summary>
+    /// Runs the handler when Enter is pressed in the field with the given id.
+    /// </summary>
+    private static void OnEnter(IDocument document, string id, Action handler) =>
+        document.GetElementById(id)?.AddEventListener("keydown", (_, ev) =>
+        {
+            if (ev is KeyboardEvent { Key: "Enter" })
+            {
+                ev.Cancel();
+                handler();
+            }
+        });
 
     /// <summary>
     /// Runs on any thread: sends the request and shows what came back on the event loop.
@@ -292,9 +464,11 @@ public sealed class RequesterPage(string? colorScheme) : HtmlPage("requester", c
             < 400 => "code redirect",
             _ => "code failure",
         };
-        var size = result.Body.IsTruncated ? $"more than {FormatSize(result.Body.Data.Length)}" : FormatSize(result.Body.Data.Length);
-        document.GetElementById("response-info")!.TextContent =
-            $"{FormatTime(result.Total)} (first byte after {FormatTime(result.FirstByte)}) · {size} · {GetName(requester)}";
+        var size = FormatSize(result.Body.Data.Length);
+        document.GetElementById("response-time")!.TextContent = FormatTime(result.Total);
+        document.GetElementById("response-first-byte")!.TextContent = FormatTime(result.FirstByte);
+        document.GetElementById("response-size")!.TextContent = result.Body.IsTruncated ? $"> {size}" : size;
+        document.GetElementById("response-requester")!.TextContent = GetName(requester);
         document.GetElementById("response-address")!.TextContent = result.Address;
 
         result.Headers.TryGetValue(HeaderNames.ContentType, out var contentType);
@@ -306,7 +480,8 @@ public sealed class RequesterPage(string? colorScheme) : HtmlPage("requester", c
         document.GetElementById("request-headers")!.InnerHtml = FormatHeaders(result.Request.Headers);
         document.GetElementById("tab-headers")!.QuerySelector(".badge")!.TextContent =
             result.Headers.Count.ToString(CultureInfo.InvariantCulture);
-        document.GetElementById("response")!.ClassName = "card response";
+        document.GetElementById("response-empty")!.ClassName = "placeholder hidden";
+        document.GetElementById("response-content")!.ClassName = "content";
         ShowStatus(document, string.Empty, null);
     }
 
@@ -409,6 +584,46 @@ public sealed class RequesterPage(string? colorScheme) : HtmlPage("requester", c
     {
         var name = requester.GetType().Name;
         return name.Length > "Requester".Length && name.EndsWith("Requester", StringComparison.Ordinal) ? name[..^"Requester".Length] : name;
+    }
+
+    /// <summary>
+    /// The address without its scheme (if it is one of the web), e.g., "example.org/api".
+    /// </summary>
+    private static string GetShortAddress(string url)
+    {
+        foreach (var prefix in (string[])["https://", "http://"])
+        {
+            if (url.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return url[prefix.Length..].TrimEnd('/');
+            }
+        }
+
+        return url;
+    }
+
+    /// <summary>
+    /// Chooses the option of a select. The renderer paints controls from their markup, so the
+    /// selected attribute changes along with the live value.
+    /// </summary>
+    private static void SetSelected(IDocument document, string id, string value)
+    {
+        if (document.GetElementById(id) is IHtmlSelectElement select)
+        {
+            foreach (var option in select.Options)
+            {
+                if (option.Value == value)
+                {
+                    option.SetAttribute("selected", string.Empty);
+                }
+                else
+                {
+                    option.RemoveAttribute("selected");
+                }
+            }
+
+            select.Value = value;
+        }
     }
 
     private static string GetSelected(IDocument document, string id) =>

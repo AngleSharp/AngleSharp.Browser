@@ -275,7 +275,7 @@ public sealed class BrowserView : Control
         {
             case PointerUpdateKind.LeftButtonPressed:
                 Focus();
-                Observe(_engine?.PointerDownAsync(point.Position.X, point.Position.Y, GetModifiers(e.KeyModifiers)));
+                Observe(_engine?.PointerDownAsync(point.Position.X, point.Position.Y, e.ClickCount, GetModifiers(e.KeyModifiers)));
                 e.Handled = true;
                 break;
             case PointerUpdateKind.XButton1Pressed:
@@ -333,6 +333,17 @@ public sealed class BrowserView : Control
         {
             e.Handled = true;
             await PasteAsync(engine);
+        }
+        else if (e.Key == Key.C && e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            e.Handled = true;
+            await CopyAsync(engine);
+        }
+        else if (e.Key == Key.A && e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            // the page sees the shortcut, and selects all of its text unless it cancels it
+            e.Handled = true;
+            Observe(engine.KeyDownAsync("a", GetModifiers(e.KeyModifiers)));
         }
         else if (SpecialKeys.TryGetValue(e.Key, out var key) || !e.KeyModifiers.HasFlag(KeyModifiers.Control) && !e.KeyModifiers.HasFlag(KeyModifiers.Alt))
         {
@@ -473,6 +484,16 @@ public sealed class BrowserView : Control
             {
                 _isSyncingSource = false;
             }
+        }
+    }
+
+    private async Task CopyAsync(BrowserEngine engine)
+    {
+        var text = await engine.CopySelectionAsync();
+
+        if (text.Length > 0 && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
+        {
+            await clipboard.SetTextAsync(text);
         }
     }
 

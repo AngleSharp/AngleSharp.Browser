@@ -241,10 +241,10 @@ public class VisionAddressTests
         var (body, headers, requester) = await engine.InvokeAsync(d => (
             d!.GetElementById("body-text")!.TextContent,
             d.GetElementById("headers-list")!.TextContent,
-            d.GetElementById("response-info")!.TextContent));
+            d.GetElementById("response-requester")!.TextContent));
         Assert.That(body, Does.Contain("<title>About"));
         Assert.That(headers, Does.Contain("text/html"));
-        Assert.That(requester, Does.EndWith("Scheme"));
+        Assert.That(requester, Is.EqualTo("Scheme"));
         pages.Dispose();
     }
 
@@ -315,6 +315,84 @@ public class VisionAddressTests
         pages.Dispose();
     }
 
+    [AvaloniaTest]
+    public async Task TheRequesterSavesRestoresAndDeletesRequests()
+    {
+        var host = new TestHost();
+        var saved = new SavedRequests();
+        using var engine = CreateEngine(host, out var pages, requests: saved);
+
+        await engine.NavigateAsync("vision:requester");
+        await WaitUntil(engine, d => d?.QuerySelectorAll("#requester option").Length > 1);
+        Assert.That(await engine.InvokeAsync(d => d!.QuerySelector("#saved .none")), Is.Not.Null);
+
+        // without a name, the method and address make one
+        await engine.InvokeAsync(d =>
+        {
+            ((IHtmlSelectElement)d!.GetElementById("method")!).Value = "Post";
+            ((IHtmlInputElement)d.GetElementById("url")!).Value = "https://example.org/api/items";
+            ((IHtmlTextAreaElement)d.GetElementById("body")!).Value = "{}";
+            ((IHtmlElement)d.GetElementById("save")!).DoClick();
+        });
+        // the click is dispatched after this
+        await WaitUntil(engine, d => d!.QuerySelectorAll("#saved .item").Length == 1);
+        await engine.InvokeAsync(d =>
+        {
+            ((IHtmlInputElement)d!.GetElementById("name")!).Value = "Items";
+            ((IHtmlElement)d.GetElementById("save")!).DoClick();
+        });
+        await WaitUntil(engine, d => d!.QuerySelectorAll("#saved .item").Length == 2);
+        Assert.That(saved.All.Select(m => m.Name), Is.EqualTo(new[] { "Items", "POST example.org/api/items" }));
+        Assert.That(saved.Find("items")!.Body, Is.EqualTo("{}"));
+
+        // what the form shows is replaced by the saved request
+        await engine.InvokeAsync(d =>
+        {
+            ((IHtmlSelectElement)d!.GetElementById("method")!).Value = "Get";
+            ((IHtmlInputElement)d.GetElementById("url")!).Value = "https://other.org/";
+            ((IHtmlTextAreaElement)d.GetElementById("body")!).Value = string.Empty;
+            ((IHtmlElement)d.QuerySelector("#saved .item[data-name='Items'] .name")!).DoClick();
+        });
+        await WaitUntil(engine, d => d!.QuerySelector("#saved .item.active") is not null);
+        var (method, url, body, active, methodClass) = await engine.InvokeAsync(d => (
+            ((IHtmlSelectElement)d!.GetElementById("method")!).Value,
+            ((IHtmlInputElement)d.GetElementById("url")!).Value,
+            ((IHtmlTextAreaElement)d.GetElementById("body")!).Value,
+            d.QuerySelector("#saved .item.active")?.GetAttribute("data-name"),
+            d.GetElementById("method")!.ClassName));
+        Assert.That((method, url, body, active), Is.EqualTo(("Post", "https://example.org/api/items", "{}", "Items")));
+        Assert.That(methodClass, Does.Contain("post"));
+
+        await engine.InvokeAsync(d => ((IHtmlElement)d!.QuerySelector("#saved .item[data-name='Items'] .remove")!).DoClick());
+        await WaitUntil(engine, d => d!.QuerySelectorAll("#saved .item").Length == 1);
+        Assert.That(saved.Find("Items"), Is.Null);
+        pages.Dispose();
+    }
+
+    [Test]
+    public void SavedRequestsAreKeptInTheirDirectory()
+    {
+        var directory = Directory.CreateTempSubdirectory("vision-requests-").FullName;
+
+        try
+        {
+            var requests = new SavedRequests(directory);
+            requests.Save(new SavedRequest("First", "Get", "https://example.org/", "Accept: */*", string.Empty, null, true));
+            requests.Save(new SavedRequest("Second", "Post", "https://example.org/", string.Empty, "x", "HttpClient", false));
+            requests.Save(new SavedRequest("first", "Delete", "https://example.org/1", string.Empty, string.Empty, null, true));
+
+            var loaded = new SavedRequests(directory).All;
+
+            // saving a name again replaces the request, the most recent first
+            Assert.That(loaded.Select(m => (m.Name, m.Method)), Is.EqualTo(new[] { ("first", "Delete"), ("Second", "Post") }));
+            Assert.That(loaded[1].Requester, Is.EqualTo("HttpClient"));
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
     [TestCase("vision:settings", "settings")]
     [TestCase("vision://About/", "about")]
     [TestCase("vision:settings?x=1#y", "settings")]
@@ -332,10 +410,10 @@ public class VisionAddressTests
         }
     }
 
-    private static BrowserEngine CreateEngine(IBrowserHost host, out VisionPages pages, UrlHistory? history = null, BrowserOptions? options = null)
+    private static BrowserEngine CreateEngine(IBrowserHost host, out VisionPages pages, UrlHistory? history = null, BrowserOptions? options = null, SavedRequests? requests = null)
     {
         options ??= new BrowserOptions { ProfileDirectory = null, ViewportWidth = 800, ViewportHeight = 600 };
-        pages = new VisionPages(host, history);
+        pages = new VisionPages(host, history, requests);
         options.SchemeHandlers[VisionPages.Scheme] = pages.HandleAsync;
         var engine = new BrowserEngine(options);
         pages.Attach(engine);

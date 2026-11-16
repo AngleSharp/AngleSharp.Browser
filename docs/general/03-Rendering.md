@@ -41,6 +41,8 @@ if (frame is not null)
 
 Preparing a frame also refreshes what the engine knows for hit testing. The cursor and links are then looked up without touching the DOM, which keeps pointer moves responsive on busy pages.
 
+Animated images (GIFs and WebPs of several frames) play on their own: when one in view shows its next frame, the engine raises `Invalidated`, and the next frame is the last one rasterized again, without a layout. An image plays from the moment it is first painted and as often as it tells, which is forever for most GIFs.
+
 The first frame of a page shows up early: only what is in the viewport is styled and laid out for it. The engine asks for the next frame right away (it raises `Invalidated`), which lays out the whole page. Until then, the page below the viewport is blank, and the scroll position is not limited to the height of the page.
 
 ## Overscan and Scrolling

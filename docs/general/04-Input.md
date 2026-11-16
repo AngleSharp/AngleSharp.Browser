@@ -15,6 +15,7 @@ All positions are in CSS pixels relative to the viewport.
 | `MovePointer(x, y)` | Moves the pointer without waiting. Moves are coalesced, which is what a UI should use. |
 | `MovePointerAsync(x, y)` | Moves the pointer and waits until the hover state has been updated. |
 | `PointerDownAsync(x, y, modifiers)` | Presses the primary button. |
+| `PointerDownAsync(x, y, clickCount, modifiers)` | Presses the primary button for the given time in a row, e.g., 2 for a double click. |
 | `PointerUpAsync(x, y, modifiers)` | Releases the primary button. |
 | `ClickAsync(x, y, modifiers)` | Presses and releases the primary button. |
 | `HoveredLink`, `Cursor` | The link below the pointer and the `BrowserCursor` a host should display. |
@@ -30,6 +31,26 @@ Holding Control while clicking a link requests a new window, as does a link with
 
 ```cs
 await engine.ClickAsync(40, 390, InputModifiers.Control);
+```
+
+## Selecting Text
+
+With `BrowserOptions.IsTextSelectionEnabled`, the text of a page can be selected as in a browser. It is off by default, as the layouts then also record where their text comes from.
+
+- Pressing the button and moving the pointer with it held selects the text in between; with Shift, a press extends the selection.
+- A second press in a row (`clickCount` 2) selects a word, a third one the paragraph.
+- Control+A (or Cmd+A) selects all text of the page, unless a text field has the focus.
+- Over text that can be selected, `Cursor` is `BrowserCursor.Text`, unless the page asks for another cursor.
+- A page can cancel `mousedown` or `selectstart`, and `user-select: none` keeps text from being selected. Scripts see the selection through `getSelection()`.
+
+`CopySelectionAsync` fires `copy` and returns the selected text for the clipboard, or an empty text if nothing is selected or the page canceled the event:
+
+```cs
+var engine = new BrowserEngine(new BrowserOptions { IsTextSelectionEnabled = true });
+await engine.LoadHtmlAsync("<p>Hello world</p>");
+await engine.PointerDownAsync(30, 20, 2);
+await engine.PointerUpAsync(30, 20);
+Console.WriteLine(await engine.CopySelectionAsync());
 ```
 
 ## Keyboard

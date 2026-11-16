@@ -2147,6 +2147,151 @@ public class BrowserEngineTests
         Assert.That(watch.ElapsedMilliseconds, Is.LessThan(1000));
     }
 
+    [Test]
+    public async Task AnimatedTransformsNeedNoLayoutsOfThePage()
+    {
+        await _engine.LoadHtmlAsync("""
+            <!doctype html><style>
+              body { margin: 0 }
+              @keyframes spin { to { transform: rotate(360deg) } }
+              #box { width: 60px; height: 60px; background: rgb(255, 0, 0); animation: spin 1s linear infinite }
+              #glow { position: relative; height: 40px }
+              #glow::after { content: ""; position: absolute; inset: 0; background: rgb(0, 0, 255); opacity: 0.5; animation: spin 2s linear infinite }
+            </style><div id=glow></div><div id=box></div><p>text</p>
+            """);
+        await _engine.PrepareFrameAsync();
+        await _engine.PrepareFrameAsync();
+        var start = _engine.Diagnostics.Frames.Count;
+        var pixels = new HashSet<(byte, byte, byte)>();
+
+        for (var i = 0; i < 8; i++)
+        {
+            await Task.Delay(40);
+            pixels.Add(PixelOf((await _engine.PrepareFrameAsync())!, 58, 42));
+        }
+
+        var kinds = _engine.Diagnostics.Frames.Skip(start).Select(frame => frame.Kind).ToList();
+        Assert.That(kinds, Has.Count.GreaterThanOrEqualTo(8));
+        // the frames of the animation are the last one painted under the new transform
+        Assert.That(kinds.Count(kind => kind == FrameKind.Layout), Is.LessThanOrEqualTo(1), string.Join(", ", kinds));
+        Assert.That(pixels, Has.Count.GreaterThan(1));
+    }
+
+    [Test]
+    public async Task AnimatedGifAsksForFramesShowingItsNextImages()
+    {
+        // 1x1 frames, red for 100 ms, then blue for 1 s, looping
+        byte[] gif =
+        [
+            .. "GIF89a"u8.ToArray(), 1, 0, 1, 0, 0x80, 0, 0, 255, 0, 0, 0, 0, 255,
+            0x21, 0xFF, 0x0B, .. "NETSCAPE2.0"u8.ToArray(), 3, 1, 0, 0, 0,
+            0x21, 0xF9, 4, 0, 10, 0, 0, 0, 0x2C, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x44, 1, 0,
+            0x21, 0xF9, 4, 0, 100, 0, 0, 0, 0x2C, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x4C, 1, 0,
+            0x3B,
+        ];
+        await _engine.LoadHtmlAsync($"<!doctype html><body style='margin:0'><img src='data:image/gif;base64,{Convert.ToBase64String(gif)}' style='width:40px;height:40px'>");
+        await Eventually(() => _engine.Document?.QuerySelector("img") is IHtmlImageElement { IsCompleted: true });
+        await _engine.PrepareFrameAsync();
+        await _engine.PrepareFrameAsync();
+        var invalidations = 0;
+        _engine.Invalidated += (_, _) => invalidations++;
+        var colors = new HashSet<(byte, byte, byte)>();
+        var watch = Stopwatch.StartNew();
+
+        while (colors.Count < 2 && watch.ElapsedMilliseconds < 6000)
+        {
+            colors.Add(PixelOf((await _engine.PrepareFrameAsync())!, 20, 20));
+            await Task.Delay(30);
+        }
+
+        Assert.That(colors, Does.Contain(((byte)255, (byte)0, (byte)0)).And.Contain(((byte)0, (byte)0, (byte)255)));
+        Assert.That(invalidations, Is.GreaterThan(0));
+        // the next images of the GIF need no layout
+        Assert.That(_engine.Diagnostics.Frames.TakeLast(3).Select(frame => frame.Kind), Has.None.EqualTo(FrameKind.Layout));
+    }
+
+    private const string SelectablePage = "<!doctype html><body style='margin:0;font:20px monospace'><p id=p style='margin:0'>hello world again</p><p id=q style='margin:0'>second line</p>";
+
+    [Test]
+    public async Task TextCannotBeSelectedUnlessEnabled()
+    {
+        await _engine.LoadHtmlAsync(SelectablePage);
+        await _engine.PrepareFrameAsync();
+
+        await _engine.PointerDownAsync(2, 10, 2);
+        await _engine.PointerUpAsync(2, 10);
+
+        Assert.That(await _engine.CopySelectionAsync(), Is.Empty);
+    }
+
+    [Test]
+    public async Task DraggingSelectsTextWhenEnabled()
+    {
+        using var engine = new BrowserEngine(new BrowserOptions { ViewportWidth = 800, ViewportHeight = 600, IsTextSelectionEnabled = true });
+        await engine.LoadHtmlAsync(SelectablePage);
+        await engine.PrepareFrameAsync();
+
+        await engine.PointerDownAsync(1, 10);
+        await engine.MovePointerAsync(400, 35);
+        await engine.PointerUpAsync(400, 35);
+
+        Assert.That(await engine.CopySelectionAsync(), Is.EqualTo("hello world again\n\nsecond line"));
+    }
+
+    [Test]
+    public async Task TextShowsTheTextCursorWhenItCanBeSelected()
+    {
+        using var engine = new BrowserEngine(new BrowserOptions { ViewportWidth = 800, ViewportHeight = 600, IsTextSelectionEnabled = true });
+        await engine.LoadHtmlAsync(SelectablePage + "<p style='margin:0;cursor:default'>arrow</p>");
+        await engine.PrepareFrameAsync();
+        await engine.PrepareFrameAsync();
+
+        await engine.MovePointerAsync(20, 10);
+        var overText = engine.Cursor;
+        await engine.MovePointerAsync(700, 10);
+        var besideText = engine.Cursor;
+        await engine.MovePointerAsync(20, 60);
+        var overDefault = engine.Cursor;
+        await _engine.LoadHtmlAsync(SelectablePage);
+        await _engine.PrepareFrameAsync();
+        await _engine.MovePointerAsync(20, 10);
+
+        Assert.That(overText, Is.EqualTo(BrowserCursor.Text));
+        Assert.That(besideText, Is.EqualTo(BrowserCursor.Default));
+        Assert.That(overDefault, Is.EqualTo(BrowserCursor.Default));
+        Assert.That(_engine.Cursor, Is.EqualTo(BrowserCursor.Default));
+    }
+
+    [Test]
+    public async Task DoublePressSelectsAWordAndCtrlASelectsAll()
+    {
+        using var engine = new BrowserEngine(new BrowserOptions { ViewportWidth = 800, ViewportHeight = 600, IsTextSelectionEnabled = true });
+        await engine.LoadHtmlAsync(SelectablePage);
+        await engine.PrepareFrameAsync();
+
+        await engine.PointerDownAsync(80, 10, 2);
+        await engine.PointerUpAsync(80, 10);
+        var word = await engine.CopySelectionAsync();
+        await engine.KeyDownAsync("a", InputModifiers.Control);
+        var all = await engine.CopySelectionAsync();
+
+        Assert.That(word, Is.EqualTo("world"));
+        Assert.That(all, Does.Contain("hello world again").And.Contain("second line"));
+    }
+
+    [Test]
+    public async Task CopyingCanBeCanceledByThePage()
+    {
+        using var engine = new BrowserEngine(new BrowserOptions { ViewportWidth = 800, ViewportHeight = 600, IsTextSelectionEnabled = true });
+        await engine.LoadHtmlAsync(SelectablePage);
+        await engine.PrepareFrameAsync();
+        await engine.InvokeAsync(document => document!.AddEventListener("copy", (_, e) => e.Cancel()));
+
+        await engine.KeyDownAsync("a", InputModifiers.Control);
+
+        Assert.That(await engine.CopySelectionAsync(), Is.Empty);
+    }
+
     private string WritePage(string name, string html)
     {
         var path = Path.Combine(_directory, name);

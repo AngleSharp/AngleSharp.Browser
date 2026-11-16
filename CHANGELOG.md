@@ -6,11 +6,19 @@ Released on Friday, November 13 2026.
 - Fixed callers of the engine (e.g. awaiting `PrepareFrameAsync` and rasterizing the frame without a synchronization context) continuing on the event loop, which held up the scripts of the page
 - Fixed the pointer not firing `mouseenter`/`mouseleave` (and `pointerenter`/`pointerleave`) and its events having no `relatedTarget`
 - Fixed the pointer events of the mouse having no `pointerType`, so that scripts took the mouse for touch (e.g. SmartMenus not opening menus on hover)
+- Fixed scripts reading `event` outside of a listener failing, e.g. the carousels of smapiot.com (AngleSharp.Js 1.2.2)
+- Fixed pages scrolling a script finds the position of an element on (e.g. smapiot.com) freezing (AngleSharp.Renderer 0.11.4)
+- Improved frames of CSS animations and transitions of the transform, opacity or filter of boxes, and scrolling pages with sticky boxes: the last frame is painted anew instead of the page being laid out (smapiot.com scrolls with about 4 ms instead of 400 ms per frame, AngleSharp.Renderer 0.11.4)
+- Added `BrowserOptions.IsTextSelectionEnabled` for selecting the text of pages with the pointer (a double press selects a word, a triple one a paragraph, Shift extends) and Control+A, `PointerDownAsync` with the click count, and `CopySelectionAsync` for the clipboard; `BrowserView` passes the click count and copies with Control+C
+- Added animated images (e.g. GIFs), whose frames are shown in turn without a layout of the page
+- Added the text cursor over text that can be selected, unless the page asks for another cursor
+- Added selecting text to the windows and the panels of `Vision`
 - Added `BrowserOptions.SchemeHandlers` for custom URL schemes answered by the host
+- Added audio: `audio` elements and `new Audio()` play WAV, MP3, Ogg Vorbis and Ogg Opus (managed decoders, `BrowserOptions.AudioCodecs`) on the host's `BrowserOptions.AudioOutput` (silently without one), audible media once the user interacted with the page (`BrowserOptions.IsAutoplayAllowed`), and stop once their document is left (AngleSharp 1.10.4, AngleSharp.Js 1.2.3); `audio controls` shows a player (play/pause, time, timeline, mute) that the pointer operates, and whose time goes on without a layout of the page (AngleSharp.Renderer 0.11.4); Vision plays the audio on the default device via OpenAL Soft
 - Added suggestions of previously visited addresses to the address bar of `Vision`, the most popular first
 - Added the `vision:` scheme to `Vision`, showing its own pages (e.g., `vision:settings`) or a list of them
 - Added the start page `vision:start` to `Vision` (its new default start page), with the most visited pages, demos and Vision's own pages
-- Added the requester `vision:requester` to `Vision`, which sends HTTP requests with the requesters of the window and shows their responses
+- Added the requester `vision:requester` to `Vision`, which sends HTTP requests with the requesters of the window and shows their responses, and keeps requests saved under a name per profile
 
 # 0.1.0
 

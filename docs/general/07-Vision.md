@@ -18,7 +18,7 @@ dotnet run --project src/Vision -- https://example.org
 | `--profile <directory>` | The directory to use for cookies, web storage and the HTTP cache. |
 | `--in-memory` | Persists no browsing data. |
 
-New windows open `vision:start` unless the settings say otherwise: the pages visited most, a few demos and Vision's own pages. All of Vision's pages are listed at `vision:pages`; `vision:requester` sends HTTP requests with the requesters of the window (with its user agent, default headers and cookies) and shows the responses.
+New windows open `vision:start` unless the settings say otherwise: the pages visited most, a few demos and Vision's own pages. All of Vision's pages are listed at `vision:pages`; `vision:requester` sends HTTP requests with the requesters of the window (with its user agent, default headers and cookies) and shows the responses. Requests can be saved there under a name, and are kept with the profile (`requests.json`).
 
 The profile and the settings are kept in the `Vision` folder of the local application data directory by default.
 
@@ -30,4 +30,5 @@ The profile and the settings are kept in the `Vision` folder of the local applic
 | `ViewModels/MainViewModel.cs` | A toolbar and status bar on top of the engine's state and events, including the page's icon. |
 | `Views/MainWindow.axaml` | Placing `BrowserView` in a window, next to a second one for the diagnostics. |
 | `Models/BrowserSettings.cs` | Turning user settings into `BrowserOptions`. |
-| `Pages/` | The app's own UI (start page, requester, diagnostics, inspector, settings, site information, about) written as HTML and CSS, and wired up with .NET event handlers through `InvokeAsync`, in an engine with scripting disabled. |
+| `Audio/OpenAlAudioOutput.cs` | An `IAudioOutput` playing the audio of pages on the default device (OpenAL Soft via Silk.NET), shared by all windows, silent without a device. |
+| `Pages/` | The app's own UI (start page, requester, diagnostics, inspector, settings, site information, about) written as HTML and CSS, and wired up with .NET event handlers through `InvokeAsync`, in an engine with scripting disabled. Their text can be selected and copied like the one of pages. |

@@ -24,6 +24,8 @@ public partial class App : Application, IBrowserHost
     private CommandLine _arguments = new(null, null, false);
     private readonly Dictionary<string, UrlHistory> _histories = [];
     private UrlHistory? _inMemoryHistory;
+    private readonly Dictionary<string, SavedRequests> _savedRequests = [];
+    private SavedRequests? _inMemoryRequests;
     private PageWindow? _settingsWindow;
 
     public event EventHandler? ColorSchemeChanged;
@@ -197,7 +199,7 @@ public partial class App : Application, IBrowserHost
 
         // the browser's own pages (vision:settings, ...) are shown by the window like any page
         var history = GetHistory(options.ProfileDirectory);
-        var pages = new VisionPages(this, history);
+        var pages = new VisionPages(this, history, GetSavedRequests(options.ProfileDirectory));
         options.SchemeHandlers[VisionPages.Scheme] = pages.HandleAsync;
 
         // in-memory profiles are only shared with the opener, a directory with any window using it
@@ -265,6 +267,27 @@ public partial class App : Application, IBrowserHost
         }
 
         return history;
+    }
+
+    /// <summary>
+    /// The requests saved in the requester with a profile, which windows using it share.
+    /// In-memory profiles share ones that are not kept.
+    /// </summary>
+    private SavedRequests GetSavedRequests(string? profileDirectory)
+    {
+        if (profileDirectory is null)
+        {
+            return _inMemoryRequests ??= new SavedRequests();
+        }
+
+        var key = Path.GetFullPath(profileDirectory);
+
+        if (!_savedRequests.TryGetValue(key, out var requests))
+        {
+            _savedRequests[key] = requests = new SavedRequests(key);
+        }
+
+        return requests;
     }
 
     private void OnAboutClicked(object? sender, EventArgs e)
