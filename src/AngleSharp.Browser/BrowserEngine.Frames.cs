@@ -117,6 +117,7 @@ partial class BrowserEngine
         }
 
         var document = _document!;
+        SyncMediaChanges(document);
         var version = Volatile.Read(ref _layoutVersion);
         var time = DateTimeOffset.Now;
         var start = Stopwatch.GetTimestamp();

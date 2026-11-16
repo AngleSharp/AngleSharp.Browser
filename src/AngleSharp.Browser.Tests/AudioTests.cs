@@ -272,6 +272,36 @@ public class AudioTests
         Assert.That(after.SequenceEqual(before), Is.False);
     }
 
+    [Test]
+    public async Task MediaWithoutControlsPlaysWithoutALayout()
+    {
+        using var engine = CreateEngine(allowAutoplay: true);
+        await engine.LoadHtmlAsync("<title>Audio</title><p>A game playing its sounds</p>", Address);
+        (await engine.PrepareFrameAsync())!.Rasterize();
+
+        // like a game rewinding and playing its sound effects
+        await engine.EvaluateScriptAsync("""
+            var audio = new Audio('app:tone.wav'), plays = 0;
+            audio.onended = function () { if (++plays < 2) { audio.currentTime = 0; audio.play(); } else { document.title = 'done'; } };
+            audio.play();
+            """);
+        // (running a script lays out anew, the title doesn't)
+        (await engine.PrepareFrameAsync())!.Rasterize();
+        var start = engine.Diagnostics.Frames.Count;
+        var watch = Stopwatch.StartNew();
+
+        while (engine.Title != "done" && watch.ElapsedMilliseconds < 5000)
+        {
+            (await engine.PrepareFrameAsync())?.Rasterize();
+            await Task.Delay(20);
+        }
+
+        var kinds = engine.Diagnostics.Frames.Skip(start).Select(frame => frame.Kind).ToList();
+        Assert.That(engine.Title, Is.EqualTo("done"));
+        Assert.That(kinds, Is.Not.Empty);
+        Assert.That(kinds, Has.None.EqualTo(FrameKind.Layout), string.Join(", ", kinds));
+    }
+
     // controls at the top left (300x54), of a media of 30 seconds whose events are recorded
     private static async Task LoadControlsAsync(BrowserEngine engine)
     {

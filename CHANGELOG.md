@@ -8,6 +8,7 @@ Released on Friday, November 13 2026.
 - Fixed the pointer events of the mouse having no `pointerType`, so that scripts took the mouse for touch (e.g. SmartMenus not opening menus on hover)
 - Fixed scripts reading `event` outside of a listener failing, e.g. the carousels of smapiot.com (AngleSharp.Js 1.2.2)
 - Fixed pages scrolling a script finds the position of an element on (e.g. smapiot.com) freezing (AngleSharp.Renderer 0.11.4)
+- Fixed media changing (e.g. a game playing a sound effect, which rewinds and plays an `audio` element) laying out the whole page, which stalled the frames (e.g. whenever Mario jumps in the Mario 5 demo of demo-full.piral.io); only a page showing `audio controls` is laid out anew
 - Improved frames of CSS animations and transitions of the transform, opacity or filter of boxes, and scrolling pages with sticky boxes: the last frame is painted anew instead of the page being laid out (smapiot.com scrolls with about 4 ms instead of 400 ms per frame, AngleSharp.Renderer 0.11.4)
 - Added `BrowserOptions.IsTextSelectionEnabled` for selecting the text of pages with the pointer (a double press selects a word, a triple one a paragraph, Shift extends) and Control+A, `PointerDownAsync` with the click count, and `CopySelectionAsync` for the clipboard; `BrowserView` passes the click count and copies with Control+C
 - Added animated images (e.g. GIFs), whose frames are shown in turn without a layout of the page
