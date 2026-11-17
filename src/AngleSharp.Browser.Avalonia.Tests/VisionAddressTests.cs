@@ -116,6 +116,30 @@ public class VisionAddressTests
     }
 
     [AvaloniaTest]
+    public async Task TheHistoryButtonsJumpToTheEntriesTheyList()
+    {
+        var host = new TestHost();
+        using var engine = CreateEngine(host, out var pages);
+        using var viewModel = new MainViewModel(engine, "about:blank", host);
+
+        await engine.NavigateAsync("vision:about");
+        await engine.NavigateAsync("vision:settings");
+        await engine.NavigateAsync("vision:start");
+
+        var back = viewModel.GetHistoryJumps(isBack: true);
+        Assert.That(back.Select(m => (m.Delta, m.Url)), Is.EqualTo(new[] { (-1, "vision:settings"), (-2, "vision:about") }));
+        Assert.That(back.All(m => m.Heading.Length > 0), Is.True);
+        Assert.That(viewModel.GetHistoryJumps(isBack: false), Is.Empty);
+
+        await viewModel.JumpAsync(back[1]);
+
+        Assert.That(engine.Url, Is.EqualTo("vision:about"));
+        Assert.That(viewModel.GetHistoryJumps(isBack: false).Select(m => (m.Delta, m.Url)),
+            Is.EqualTo(new[] { (1, "vision:settings"), (2, "vision:start") }));
+        pages.Dispose();
+    }
+
+    [AvaloniaTest]
     public async Task WithoutAChosenSuggestionTheTypedAddressIsUsed()
     {
         var history = new UrlHistory();
@@ -326,7 +350,7 @@ public class VisionAddressTests
         await WaitUntil(engine, d => d?.QuerySelectorAll("#requester option").Length > 1);
         Assert.That(await engine.InvokeAsync(d => d!.QuerySelector("#saved .none")), Is.Not.Null);
 
-        // without a name, the method and address make one
+        // the button below the response asks for a name, the method and address by default
         await engine.InvokeAsync(d =>
         {
             ((IHtmlSelectElement)d!.GetElementById("method")!).Value = "Post";
@@ -335,17 +359,34 @@ public class VisionAddressTests
             ((IHtmlElement)d.GetElementById("save")!).DoClick();
         });
         // the click is dispatched after this
-        await WaitUntil(engine, d => d!.QuerySelectorAll("#saved .item").Length == 1);
+        await WaitUntil(engine, d => d!.GetElementById("modal")!.ClassList.Contains("open"));
+        Assert.That(await engine.InvokeAsync(d => ((IHtmlInputElement)d!.GetElementById("name")!).Value), Is.EqualTo("POST example.org/api/items"));
+        await engine.InvokeAsync(d => ((IHtmlElement)d!.GetElementById("save-confirm")!).DoClick());
+        await WaitUntil(engine, d => d!.QuerySelectorAll("#saved .item").Length == 1 && !d.GetElementById("modal")!.ClassList.Contains("open"));
+        Assert.That(await engine.InvokeAsync(d => d!.GetElementById("menu-count")!.TextContent), Is.EqualTo("1"));
+
+        // cancelling saves nothing
+        await engine.InvokeAsync(d => ((IHtmlElement)d!.GetElementById("save")!).DoClick());
+        await WaitUntil(engine, d => d!.GetElementById("modal")!.ClassList.Contains("open"));
+        await engine.InvokeAsync(d => ((IHtmlElement)d!.GetElementById("save-cancel")!).DoClick());
+        await WaitUntil(engine, d => !d!.GetElementById("modal")!.ClassList.Contains("open"));
+
+        await engine.InvokeAsync(d => ((IHtmlElement)d!.GetElementById("save")!).DoClick());
+        await WaitUntil(engine, d => d!.GetElementById("modal")!.ClassList.Contains("open"));
         await engine.InvokeAsync(d =>
         {
             ((IHtmlInputElement)d!.GetElementById("name")!).Value = "Items";
-            ((IHtmlElement)d.GetElementById("save")!).DoClick();
+            ((IHtmlElement)d.GetElementById("save-confirm")!).DoClick();
         });
         await WaitUntil(engine, d => d!.QuerySelectorAll("#saved .item").Length == 2);
         Assert.That(saved.All.Select(m => m.Name), Is.EqualTo(new[] { "Items", "POST example.org/api/items" }));
         Assert.That(saved.Find("items")!.Body, Is.EqualTo("{}"));
 
-        // what the form shows is replaced by the saved request
+        // the saved requests are in the sheet the menu button opens
+        await engine.InvokeAsync(d => ((IHtmlElement)d!.GetElementById("menu")!).DoClick());
+        await WaitUntil(engine, d => d!.GetElementById("sheet")!.ClassList.Contains("open"));
+
+        // what the form shows is replaced by the saved request, which closes the sheet
         await engine.InvokeAsync(d =>
         {
             ((IHtmlSelectElement)d!.GetElementById("method")!).Value = "Get";
@@ -362,6 +403,7 @@ public class VisionAddressTests
             d.GetElementById("method")!.ClassName));
         Assert.That((method, url, body, active), Is.EqualTo(("Post", "https://example.org/api/items", "{}", "Items")));
         Assert.That(methodClass, Does.Contain("post"));
+        Assert.That(await engine.InvokeAsync(d => d!.GetElementById("sheet")!.ClassList.Contains("open")), Is.False);
 
         await engine.InvokeAsync(d => ((IHtmlElement)d!.QuerySelector("#saved .item[data-name='Items'] .remove")!).DoClick());
         await WaitUntil(engine, d => d!.QuerySelectorAll("#saved .item").Length == 1);

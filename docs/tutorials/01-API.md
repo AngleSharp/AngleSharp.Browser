@@ -10,7 +10,7 @@ The following APIs cover most day-to-day tasks:
 
 - `new BrowserEngine(options)`
 : Creates a browsing context with a history; dispose it when done.
-- `NavigateAsync`, `LoadHtmlAsync`, `ReloadAsync`, `GoBackAsync`, `GoForwardAsync`
+- `NavigateAsync`, `LoadHtmlAsync`, `ReloadAsync`, `GoBackAsync`, `GoForwardAsync`, `GoAsync`
 : Changes what is shown.
 - `InvokeAsync`, `EvaluateScriptAsync`
 : Runs .NET code against the DOM, or JavaScript in the page.
@@ -50,7 +50,8 @@ The following APIs cover most day-to-day tasks:
 | `NormalizeAddress(address)` | Turns the input of an address bar into an absolute address (static). |
 | `NavigateAsync(address)` | Loads an address. |
 | `LoadHtmlAsync(html, address)` | Shows the given source code. |
-| `ReloadAsync()`, `GoBackAsync()`, `GoForwardAsync()` | Moves in the history. |
+| `ReloadAsync()`, `GoBackAsync()`, `GoForwardAsync()`, `GoAsync(delta)` | Moves in the history. |
+| `History` | A copy of the history's entries (address and title) and the index of the current one. |
 | `Resize(width, height)` | Changes the viewport. |
 | `PaintAsync()` | Returns a `RenderedImage` with a PNG, or `null`. |
 | `PrepareFrameAsync()` | Returns a `BrowserFrame`, or `null`. |

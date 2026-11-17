@@ -33,14 +33,16 @@
                 Padding="8,6">
             <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="4">
                 <Button Grid.Column="0"
+                        x:Name="BackButton"
                         Classes="icon"
-                        ToolTip.Tip="Back (Alt+Left)"
+                        ToolTip.Tip="Back (Alt+Left), hold for the history"
                         Command="{Binding GoBackCommand}">
                     <PathIcon Data="{StaticResource BackIcon}" />
                 </Button>
                 <Button Grid.Column="1"
+                        x:Name="ForwardButton"
                         Classes="icon"
-                        ToolTip.Tip="Forward (Alt+Right)"
+                        ToolTip.Tip="Forward (Alt+Right), hold for the history"
                         Command="{Binding GoForwardCommand}">
                     <PathIcon Data="{StaticResource ForwardIcon}" />
                 </Button>

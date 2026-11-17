@@ -4,6 +4,7 @@ using Vision.Models;
 using Vision.ViewModels;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives.PopupPositioning;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
@@ -16,11 +17,16 @@ public partial class MainWindow : Window
     private const double DefaultPanelWidth = 200;
     private const double MinPanelWidth = 160;
     private const double MaxPanelShare = 0.8;
+    private static readonly TimeSpan HoldDuration = TimeSpan.FromMilliseconds(450);
 
     private MainViewModel? _viewModel;
     // what the user made of the panel's width, which is kept for the next time
     private double? _panelWidth;
     private double _openedWidth;
+    // holding the back or forward button down opens its history instead of going there
+    private readonly DispatcherTimer _holdTimer;
+    private Button? _heldButton;
+    private bool _isHoldHandled;
 
     public MainWindow()
     {
@@ -30,6 +36,100 @@ public partial class MainWindow : Window
         AddressBox.AddHandler(KeyDownEvent, OnAddressKeyDown, RoutingStrategies.Tunnel);
         AddressBox.LostFocus += OnAddressLostFocus;
         SuggestionList.AddHandler(PointerPressedEvent, OnSuggestionPressed, RoutingStrategies.Tunnel);
+        _holdTimer = new DispatcherTimer { Interval = HoldDuration };
+        _holdTimer.Tick += OnHoldElapsed;
+
+        foreach (var button in (Button[])[BackButton, ForwardButton])
+        {
+            // before the button takes the press, and also once it has
+            button.AddHandler(PointerPressedEvent, OnHistoryButtonPressed, RoutingStrategies.Tunnel);
+            button.AddHandler(PointerReleasedEvent, OnHistoryButtonReleased, RoutingStrategies.Tunnel, handledEventsToo: true);
+            button.AddHandler(PointerCaptureLostEvent, OnHistoryButtonReleased, RoutingStrategies.Direct | RoutingStrategies.Bubble, handledEventsToo: true);
+            button.Click += OnHistoryButtonClick;
+        }
+    }
+
+    private void OnHistoryButtonPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is not Button button)
+        {
+            return;
+        }
+
+        var properties = e.GetCurrentPoint(button).Properties;
+        _isHoldHandled = false;
+
+        if (properties.IsRightButtonPressed)
+        {
+            // like the context menu of the button
+            e.Handled = true;
+            ShowHistoryMenu(button);
+        }
+        else if (properties.IsLeftButtonPressed)
+        {
+            _heldButton = button;
+            _holdTimer.Stop();
+            _holdTimer.Start();
+        }
+    }
+
+    private void OnHistoryButtonReleased(object? sender, RoutedEventArgs e)
+    {
+        _holdTimer.Stop();
+        _heldButton = null;
+    }
+
+    private void OnHoldElapsed(object? sender, EventArgs e)
+    {
+        _holdTimer.Stop();
+
+        if (_heldButton is { } button)
+        {
+            _heldButton = null;
+            // the release is no click anymore
+            _isHoldHandled = true;
+            ShowHistoryMenu(button);
+        }
+    }
+
+    private void OnHistoryButtonClick(object? sender, RoutedEventArgs e)
+    {
+        if (_isHoldHandled)
+        {
+            // the button runs its command unless the click was handled
+            _isHoldHandled = false;
+            e.Handled = true;
+        }
+    }
+
+    /// <summary>
+    /// Shows the entries of the history the button jumps to, the closest first.
+    /// </summary>
+    private void ShowHistoryMenu(Button button)
+    {
+        if (_viewModel is not { } viewModel)
+        {
+            return;
+        }
+
+        var jumps = viewModel.GetHistoryJumps(button == BackButton);
+
+        if (jumps.Count == 0)
+        {
+            return;
+        }
+
+        var menu = new MenuFlyout { Placement = PlacementMode.BottomEdgeAlignedLeft };
+
+        foreach (var jump in jumps)
+        {
+            var item = new MenuItem { Header = jump.Heading, MaxWidth = 420 };
+            ToolTip.SetTip(item, jump.Url);
+            item.Click += (_, _) => _ = viewModel.JumpAsync(jump);
+            menu.Items.Add(item);
+        }
+
+        menu.ShowAt(button);
     }
 
     private void OnAddressKeyDown(object? sender, KeyEventArgs e)

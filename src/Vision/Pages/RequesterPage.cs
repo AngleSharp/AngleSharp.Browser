@@ -24,7 +24,8 @@ using Vision.Models;
 /// A playground for the requesters of the browser (vision:requester): sends a request with one
 /// of them, like the engine of the window does for its pages (with its user agent, default
 /// headers and, if wanted, its cookies), and shows the response. Requests can be saved under a
-/// name and restored later.
+/// name (the button below the response asks for it in a dialog) and restored later from the
+/// sheet the menu button in the top-left corner opens.
 /// </summary>
 public sealed class RequesterPage(string? colorScheme, SavedRequests saved) : HtmlPage("requester", colorScheme)
 {
@@ -85,9 +86,30 @@ public sealed class RequesterPage(string? colorScheme, SavedRequests saved) : Ht
 
         document.GetElementById("method")?.AddEventListener("change", (_, _) => ShowMethod(document));
         OnClick(document, "send", () => Send(document));
-        OnClick(document, "save", () => Save(document));
+        OnClick(document, "save", () => OpenSaveDialog(document));
+        OnClick(document, "save-confirm", () => Save(document));
+        OnClick(document, "save-cancel", () => CloseSaveDialog(document));
+        OnClick(document, "menu", () => ShowSheet(document, true));
+        OnClick(document, "sheet-close", () => ShowSheet(document, false));
+        OnClick(document, "backdrop", () => ShowSheet(document, false));
+        var modal = document.GetElementById("modal")!;
+        modal.AddEventListener("click", (_, ev) =>
+        {
+            // a click beside the dialog dismisses it
+            if (ReferenceEquals(ev.OriginalTarget, modal))
+            {
+                CloseSaveDialog(document);
+            }
+        });
         OnEnter(document, "url", () => Send(document));
         OnEnter(document, "name", () => Save(document));
+        document.AddEventListener("keydown", (_, ev) =>
+        {
+            if (ev is KeyboardEvent { Key: "Escape" or "Esc" } && (CloseSaveDialog(document) | ShowSheet(document, false)))
+            {
+                ev.Cancel();
+            }
+        });
         document.GetElementById("saved")?.AddEventListener("click", (_, ev) =>
         {
             // one listener for the whole list, which is replaced whenever it changes
@@ -100,6 +122,7 @@ public sealed class RequesterPage(string? colorScheme, SavedRequests saved) : Ht
                 else
                 {
                     Restore(document, name);
+                    ShowSheet(document, false);
                 }
             }
         });
@@ -128,7 +151,53 @@ public sealed class RequesterPage(string? colorScheme, SavedRequests saved) : Ht
     }
 
     /// <summary>
-    /// Saves what the form shows under the name given (or one made of the method and address).
+    /// Asks for the name to save what the form shows under: the one of the request restored
+    /// last, else one made of the method and address.
+    /// </summary>
+    private void OpenSaveDialog(IDocument document)
+    {
+        var url = GetValue(document, "url").Trim();
+
+        if (url.Length == 0)
+        {
+            ShowStatus(document, "Enter the address of the request to save it.", "invalid", "save-status");
+            return;
+        }
+
+        ShowSheet(document, false);
+        SetValue(document, "name", _active ?? $"{GetSelected(document, "method").ToUpperInvariant()} {GetShortAddress(url)}");
+        document.GetElementById("modal")!.ClassName = "modal open";
+        (document.GetElementById("name") as IHtmlElement)?.DoFocus();
+    }
+
+    /// <summary>
+    /// Closes the dialog asking for the name.
+    /// </summary>
+    /// <returns>If it was open.</returns>
+    private static bool CloseSaveDialog(IDocument document)
+    {
+        var modal = document.GetElementById("modal")!;
+        var wasOpen = modal.ClassList.Contains("open");
+        modal.ClassName = "modal";
+        return wasOpen;
+    }
+
+    /// <summary>
+    /// Opens or closes the sheet with the saved requests.
+    /// </summary>
+    /// <returns>If it changed.</returns>
+    private static bool ShowSheet(IDocument document, bool isOpen)
+    {
+        var sheet = document.GetElementById("sheet")!;
+        var wasOpen = sheet.ClassList.Contains("open");
+        sheet.ClassName = isOpen ? "sheet open" : "sheet";
+        document.GetElementById("backdrop")!.ClassName = isOpen ? "backdrop open" : "backdrop";
+        return wasOpen != isOpen;
+    }
+
+    /// <summary>
+    /// Saves what the form shows under the name the dialog shows (or one made of the method
+    /// and address).
     /// </summary>
     private void Save(IDocument document)
     {
@@ -136,7 +205,8 @@ public sealed class RequesterPage(string? colorScheme, SavedRequests saved) : Ht
 
         if (url.Length == 0)
         {
-            ShowStatus(document, "Enter the address of the request to save it.", "invalid");
+            CloseSaveDialog(document);
+            ShowStatus(document, "Enter the address of the request to save it.", "invalid", "save-status");
             return;
         }
 
@@ -162,8 +232,8 @@ public sealed class RequesterPage(string? colorScheme, SavedRequests saved) : Ht
             GetValue(document, "body"),
             requester,
             IsChecked(document, "cookies")));
-        SetValue(document, "name", name);
-        ShowStatus(document, replaces ? $"Updated \"{name}\"." : $"Saved \"{name}\".", "saved");
+        CloseSaveDialog(document);
+        ShowStatus(document, replaces ? $"Updated \"{name}\"." : $"Saved \"{name}\".", "saved", "save-status");
     }
 
     /// <summary>
@@ -182,7 +252,6 @@ public sealed class RequesterPage(string? colorScheme, SavedRequests saved) : Ht
         SetValue(document, "url", request.Url);
         SetValue(document, "headers", request.Headers);
         SetValue(document, "body", request.Body);
-        SetValue(document, "name", request.Name);
         SetChecked(document, "cookies", request.UseCookies);
         ShowMethod(document);
         _active = request.Name;
@@ -240,8 +309,12 @@ public sealed class RequesterPage(string? colorScheme, SavedRequests saved) : Ht
 
         document.GetElementById("saved")!.InnerHtml = items.Length > 0
             ? items.ToString()
-            : """<div class="none">Name a request and save it to find it here.</div>""";
-        document.GetElementById("saved-count")!.TextContent = requests.Count.ToString(CultureInfo.InvariantCulture);
+            : """<div class="none">Save a request with the button below its response to find it here.</div>""";
+        var count = requests.Count.ToString(CultureInfo.InvariantCulture);
+        document.GetElementById("saved-count")!.TextContent = count;
+        var badge = document.GetElementById("menu-count")!;
+        badge.TextContent = count;
+        badge.ClassName = requests.Count > 0 ? "badge" : "badge empty";
     }
 
     /// <summary>
@@ -645,9 +718,9 @@ public sealed class RequesterPage(string? colorScheme, SavedRequests saved) : Ht
         send.ClassName = isSending ? "button" : "button primary";
     }
 
-    private static void ShowStatus(IDocument document, string text, string? kind)
+    private static void ShowStatus(IDocument document, string text, string? kind, string id = "status")
     {
-        var status = document.GetElementById("status")!;
+        var status = document.GetElementById(id)!;
         status.TextContent = text;
         status.ClassName = kind is null ? "status" : $"status {kind}";
     }

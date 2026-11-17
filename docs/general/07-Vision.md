@@ -18,7 +18,7 @@ dotnet run --project src/Vision -- https://example.org
 | `--profile <directory>` | The directory to use for cookies, web storage and the HTTP cache. |
 | `--in-memory` | Persists no browsing data. |
 
-New windows open `vision:start` unless the settings say otherwise: the pages visited most, a few demos and Vision's own pages. All of Vision's pages are listed at `vision:pages`; `vision:requester` sends HTTP requests with the requesters of the window (with its user agent, default headers and cookies) and shows the responses. Requests can be saved there under a name, and are kept with the profile (`requests.json`).
+New windows open `vision:start` unless the settings say otherwise: the pages visited most, a few demos and Vision's own pages. All of Vision's pages are listed at `vision:pages`; `vision:requester` sends HTTP requests with the requesters of the window (with its user agent, default headers and cookies) and shows the responses. Requests can be saved there under a name (the button below the response asks for it), and are kept with the profile (`requests.json`); the menu button in the top-left corner opens a sheet with the saved ones.
 
 The profile and the settings are kept in the `Vision` folder of the local application data directory by default.
 

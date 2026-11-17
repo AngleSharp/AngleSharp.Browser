@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using System.Diagnostics;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using Vision.Models;
@@ -240,6 +241,24 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     [RelayCommand(CanExecute = nameof(CanGoForward))]
     private Task GoForwardAsync() => Engine.GoForwardAsync();
 
+    /// <summary>
+    /// Gets the entries of the history the back (or forward) button can jump to, the closest
+    /// first, which its menu shows when it is held down.
+    /// </summary>
+    /// <param name="isBack">If the entries before the current one are wanted, else the ones after it.</param>
+    public IReadOnlyList<HistoryJump> GetHistoryJumps(bool isBack)
+    {
+        var history = Engine.History;
+        var entries = isBack ? history.Back : history.Forward;
+        var sign = isBack ? -1 : 1;
+        return [.. entries.Select((entry, i) => new HistoryJump(sign * (i + 1), entry.Url, entry.Title))];
+    }
+
+    /// <summary>
+    /// Jumps to an entry of the history, e.g., one chosen in the menu of the back button.
+    /// </summary>
+    public Task JumpAsync(HistoryJump jump) => Engine.GoAsync(jump.Delta);
+
     [RelayCommand]
     private Task ReloadAsync() => Engine.ReloadAsync();
 
@@ -414,4 +433,18 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     {
         Status = Engine.HoveredLink ?? (IsLoading ? $"Loading {Address}" : string.Empty);
     }
+}
+
+/// <summary>
+/// An entry of the history the back or forward button jumps to.
+/// </summary>
+/// <param name="Delta">The steps to the entry: negative ones go back, positive ones forward.</param>
+/// <param name="Url">The address of the entry.</param>
+/// <param name="Title">The title of its page, or empty.</param>
+public sealed record HistoryJump(int Delta, string Url, string Title)
+{
+    /// <summary>
+    /// Gets what the menu shows: the title, else the address.
+    /// </summary>
+    public string Heading => Title.Length > 0 ? Title : Url;
 }

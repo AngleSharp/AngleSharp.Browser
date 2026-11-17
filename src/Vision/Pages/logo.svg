@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="824" height="824" viewBox="0 0 824 824">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="824" y2="824" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2d6df6"/>
+      <stop offset="0.5" stop-color="#5b45e0"/>
+      <stop offset="1" stop-color="#a845cc"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="824" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="iris" cx="398" cy="396" r="80" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7ab4ff"/>
+      <stop offset="0.55" stop-color="#3d63f2"/>
+      <stop offset="1" stop-color="#2b2cb4"/>
+    </radialGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#1b0f5e" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <rect width="824" height="824" rx="184" fill="url(#body)"/>
+  <rect width="824" height="824" rx="184" fill="url(#sheen)"/>
+  <rect x="1.5" y="1.5" width="821" height="821" rx="182.5" fill="none" stroke="#ffffff" stroke-opacity="0.14" stroke-width="3"/>
+  <g filter="url(#shadow)">
+    <g fill="none" stroke="#ffffff" stroke-width="58" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="252,262 140,412 252,562"/>
+      <polyline points="572,262 684,412 572,562"/>
+    </g>
+    <circle cx="412" cy="412" r="110" fill="#ffffff"/>
+  </g>
+  <circle cx="412" cy="412" r="76" fill="url(#iris)"/>
+  <circle cx="412" cy="412" r="35" fill="#0d1038"/>
+  <circle cx="437" cy="386" r="15" fill="#ffffff"/>
+  <circle cx="392" cy="440" r="6" fill="#ffffff" fill-opacity="0.7"/>
+</svg>

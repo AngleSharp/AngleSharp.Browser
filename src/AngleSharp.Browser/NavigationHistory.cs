@@ -2,6 +2,7 @@ namespace AngleSharp.Browser;
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using AngleSharp.Browser.Dom;
 using AngleSharp.Dom;
 using System.Reflection;
@@ -20,7 +21,13 @@ sealed class NavigationHistory : IHistory
     /// <summary>
     /// One entry: its address, its document (once known) and the state a script gave it.
     /// </summary>
-    public sealed record Entry(string Url, IDocument? Document, object? State);
+    public sealed record Entry(string Url, IDocument? Document, object? State)
+    {
+        /// <summary>
+        /// Gets the title of the document, once it has one.
+        /// </summary>
+        public string Title { get; init; } = string.Empty;
+    }
 
     /// <summary>
     /// Raised when a script asks to move through the history (back, forward, go).
@@ -112,6 +119,31 @@ sealed class NavigationHistory : IHistory
         }
     }
 
+    /// <summary>
+    /// Gives the current entry the title of its (displayed) document.
+    /// </summary>
+    public void SetTitle(IDocument document, string title)
+    {
+        lock (_entries)
+        {
+            if (_index >= 0 && ReferenceEquals(_entries[_index].Document, document))
+            {
+                _entries[_index] = _entries[_index] with { Title = title };
+            }
+        }
+    }
+
+    /// <summary>
+    /// A copy of the entries and the index of the current one.
+    /// </summary>
+    public BrowserHistory GetSnapshot()
+    {
+        lock (_entries)
+        {
+            return new BrowserHistory([.. _entries.Select(m => new BrowserHistoryEntry(m.Url, m.Title))], _index);
+        }
+    }
+
     public int Length
     {
         get { lock (_entries) return _entries.Count; }
@@ -155,7 +187,7 @@ sealed class NavigationHistory : IHistory
             }
 
             var current = _entries[_index];
-            Add(new Entry(ResolveUrl(current, url), current.Document, data));
+            Add(new Entry(ResolveUrl(current, url), current.Document, data) { Title = current.Title });
             SetDocumentUrl(_entries[_index]);
         }
 

@@ -338,6 +338,12 @@ public sealed partial class BrowserEngine : IDisposable
     }
 
     /// <summary>
+    /// Gets a copy of the history: its entries (oldest first) and the index of the current one,
+    /// e.g., for a menu of the back and forward buttons.
+    /// </summary>
+    public BrowserHistory History => _history.GetSnapshot();
+
+    /// <summary>
     /// Gets the custom schemes the engine answers; see <see cref="BrowserOptions.SchemeHandlers"/>.
     /// </summary>
     public IReadOnlyList<string> Schemes => _schemes;
@@ -442,6 +448,14 @@ public sealed partial class BrowserEngine : IDisposable
     /// <param name="cancellationToken">The token to cancel loading.</param>
     public Task GoForwardAsync(CancellationToken cancellationToken = default) =>
         TraverseAsync(1, cancellationToken);
+
+    /// <summary>
+    /// Navigates to the entry in the history the given number of steps away, if any.
+    /// </summary>
+    /// <param name="delta">The number of steps: negative ones go back, positive ones forward.</param>
+    /// <param name="cancellationToken">The token to cancel loading.</param>
+    public Task GoAsync(int delta, CancellationToken cancellationToken = default) =>
+        TraverseAsync(delta, cancellationToken);
 
     /// <summary>
     /// Changes the size of the viewport.
@@ -750,6 +764,7 @@ public sealed partial class BrowserEngine : IDisposable
         if (active is not null && active.ReadyState != DocumentReadyState.Loading && (active.Title ?? string.Empty) != _title)
         {
             _title = active.Title ?? string.Empty;
+            _history.SetTitle(active, _title);
             OnStateChanged();
         }
 

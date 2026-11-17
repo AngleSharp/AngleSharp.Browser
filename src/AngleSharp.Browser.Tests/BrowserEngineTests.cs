@@ -2069,6 +2069,33 @@ public class BrowserEngineTests
     }
 
     [Test]
+    public async Task HistoryListsItsEntriesAndJumpsSeveralSteps()
+    {
+        var first = new Uri(WritePage("first.html", "<title>First</title>")).AbsoluteUri;
+        var second = new Uri(WritePage("second.html", "<title>Second</title>")).AbsoluteUri;
+        var third = new Uri(WritePage("third.html", "<title>Third</title>")).AbsoluteUri;
+        await _engine.NavigateAsync(first);
+        await _engine.NavigateAsync(second);
+        await _engine.NavigateAsync(third);
+
+        var history = _engine.History;
+        Assert.That(history.Index, Is.EqualTo(2));
+        Assert.That(history.Entries.Select(m => (m.Url, m.Title)), Is.EqualTo(new[] { (first, "First"), (second, "Second"), (third, "Third") }));
+        Assert.That(history.Back.Select(m => m.Title), Is.EqualTo(new[] { "Second", "First" }));
+        Assert.That(history.Forward, Is.Empty);
+
+        await _engine.GoAsync(-2);
+
+        Assert.That(_engine.Title, Is.EqualTo("First"));
+        Assert.That(_engine.History.Forward.Select(m => m.Title), Is.EqualTo(new[] { "Second", "Third" }));
+
+        await _engine.GoAsync(2);
+
+        Assert.That(_engine.Title, Is.EqualTo("Third"));
+        Assert.That(_engine.CanGoForward, Is.False);
+    }
+
+    [Test]
     public async Task WindowCanBeOpenedAfterRequestsWereMade()
     {
         using var server = new TestServer(new()

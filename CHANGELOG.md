@@ -19,7 +19,8 @@ Released on Friday, November 13 2026.
 - Added suggestions of previously visited addresses to the address bar of `Vision`, the most popular first
 - Added the `vision:` scheme to `Vision`, showing its own pages (e.g., `vision:settings`) or a list of them
 - Added the start page `vision:start` to `Vision` (its new default start page), with the most visited pages, demos and Vision's own pages
-- Added the requester `vision:requester` to `Vision`, which sends HTTP requests with the requesters of the window and shows their responses, and keeps requests saved under a name per profile
+- Added `BrowserEngine.History` (the entries with their titles) and `BrowserEngine.GoAsync` for jumping several entries; holding the back or forward button of `Vision` (or right-clicking it) shows the entries to jump to
+- Added the requester `vision:requester` to `Vision`, which sends HTTP requests with the requesters of the window and shows their responses, and keeps requests saved under a name per profile (saved from a dialog, listed in a sheet opened from the top-left corner)
 
 # 0.1.0
 

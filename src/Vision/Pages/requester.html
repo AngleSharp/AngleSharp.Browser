@@ -51,6 +51,45 @@ body {
   margin-bottom: 20px;
 }
 
+.hero .menu {
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  margin-right: 12px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+  cursor: pointer;
+  user-select: none;
+}
+
+.hero .menu:hover {
+  background: var(--surface-strong);
+}
+
+.hero .menu .bar-line {
+  display: block;
+  width: 16px;
+  height: 2px;
+  margin: 3px auto;
+  border-radius: 1px;
+  background: var(--text);
+}
+
+.hero .menu .badge {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.hero .menu .badge.empty {
+  display: none;
+}
+
 .hero .mark {
   flex: none;
   width: 40px;
@@ -75,22 +114,6 @@ body {
   margin: 2px 0 0;
 }
 
-.layout {
-  display: flex;
-  align-items: flex-start;
-}
-
-.sidebar {
-  flex: none;
-  width: 272px;
-  margin-right: 16px;
-}
-
-.main {
-  flex: 1;
-  min-width: 0;
-}
-
 .card {
   margin-bottom: 16px;
   border-radius: 16px;
@@ -113,7 +136,65 @@ body {
   margin-left: 8px;
 }
 
-/* the saved requests */
+/* the saved requests, in a sheet sliding in from the left */
+.backdrop {
+  display: none;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.backdrop.open {
+  display: block;
+}
+
+.sheet {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 320px;
+  max-width: 85%;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  transform: translateX(-110%);
+  transition: transform 0.2s ease-out;
+}
+
+.sheet.open {
+  transform: none;
+}
+
+.sheet .card-title {
+  padding: 18px 12px 12px 16px;
+}
+
+.sheet .close {
+  margin-left: auto;
+}
+
+.close {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 28px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.close:hover {
+  background: var(--surface-strong);
+}
+
 .saved {
   padding: 0 8px 8px;
 }
@@ -310,7 +391,7 @@ select.field {
 }
 
 .editor .label,
-.save .label {
+.dialog .label {
   display: block;
   color: var(--muted);
   font-size: 11px;
@@ -335,29 +416,77 @@ select.field {
   font-size: 12px;
 }
 
-.save {
+.composer .status {
+  margin-top: 12px;
+  color: var(--muted);
+}
+
+.composer .status:empty {
+  display: none;
+}
+
+/* saving: the button below the response and its dialog */
+.actions {
   display: flex;
   align-items: center;
-  margin-top: 16px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
+  justify-content: flex-end;
 }
 
-.save .label {
-  flex: none;
-  margin-right: 10px;
-}
-
-.save .name {
-  width: 260px;
-  margin-right: 8px;
-}
-
-.save .status {
+.actions .status {
   flex: 1;
   min-width: 0;
-  margin-left: 12px;
+  margin-right: 12px;
   color: var(--muted);
+  text-align: right;
+}
+
+.modal {
+  display: none;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.modal.open {
+  display: block;
+}
+
+.dialog {
+  width: 380px;
+  max-width: 90%;
+  margin: 18vh auto 0;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg);
+}
+
+.dialog h2 {
+  margin-bottom: 4px;
+  font-size: 16px;
+}
+
+.dialog .label {
+  margin-top: 16px;
+}
+
+.dialog .field {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+}
+
+.dialog .buttons {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+.dialog .buttons .button + .button {
+  margin-left: 8px;
 }
 
 .status.saved {
@@ -510,15 +639,6 @@ pre {
 }
 
 @media (max-width: 860px) {
-  .layout {
-    display: block;
-  }
-
-  .sidebar {
-    width: auto;
-    margin-right: 0;
-  }
-
   .editors {
     display: block;
   }
@@ -532,6 +652,10 @@ pre {
 <body>
   <div class="page">
     <div class="hero">
+      <button type="button" class="menu" id="menu" title="Saved requests">
+        <span class="bar-line"></span><span class="bar-line"></span><span class="bar-line"></span>
+        <span class="badge empty" id="menu-count">0</span>
+      </button>
       <div class="mark">{ }</div>
       <div>
         <h1>Requester</h1>
@@ -539,75 +663,87 @@ pre {
       </div>
     </div>
 
-    <div class="layout">
-      <div class="sidebar">
-        <div class="card">
-          <div class="card-title">Saved requests <span class="badge" id="saved-count">0</span></div>
-          <div class="saved" id="saved"></div>
+    <div class="main">
+      <div class="card composer">
+        <div class="bar">
+          <select class="method get" id="method">{{methods}}</select>
+          <input type="text" class="url" id="url" value="https://httpbin.org/get" placeholder="https://example.org/api">
+          <button type="button" class="button primary" id="send">Send</button>
+        </div>
+        <div class="options">
+          <span class="label">Requester</span>
+          <select class="field requester" id="requester"></select>
+          <label class="check"><input type="checkbox" id="cookies" checked>Send and keep the cookies of the browser</label>
+        </div>
+        <div class="editors">
+          <div class="editor">
+            <span class="label">Headers</span>
+            <span class="hint">One "Name: value" per line.</span>
+            <textarea class="field" id="headers">Accept: application/json</textarea>
+          </div>
+          <div class="editor">
+            <span class="label">Body</span>
+            <span class="hint">UTF-8. Without a Content-Type, JSON if it starts with { or [.</span>
+            <textarea class="field" id="body"></textarea>
+          </div>
+        </div>
+        <div class="status" id="status"></div>
+      </div>
+
+      <div class="card response" id="response">
+        <div class="placeholder" id="response-empty">
+          <span class="big">No response yet</span>
+          Send a request to see its status, headers and body here.
+        </div>
+        <div class="content hidden" id="response-content">
+          <div class="summary">
+            <span class="code" id="response-status"></span>
+            <div class="metrics">
+              <div class="metric"><span class="label">Time</span><span class="value" id="response-time"></span></div>
+              <div class="metric"><span class="label">First byte</span><span class="value" id="response-first-byte"></span></div>
+              <div class="metric"><span class="label">Size</span><span class="value" id="response-size"></span></div>
+              <div class="metric"><span class="label">Requester</span><span class="value" id="response-requester"></span></div>
+            </div>
+          </div>
+          <div class="address" id="response-address"></div>
+          <div class="tabs">
+            <button type="button" class="tab active" id="tab-body">Body</button>
+            <button type="button" class="tab" id="tab-headers">Headers <span class="badge">0</span></button>
+            <button type="button" class="tab" id="tab-request">Request</button>
+          </div>
+          <div class="panel active" id="panel-body"><pre id="body-text"></pre></div>
+          <div class="panel" id="panel-headers"><div id="headers-list"></div></div>
+          <div class="panel" id="panel-request">
+            <div class="request-line" id="request-line"></div>
+            <div id="request-headers"></div>
+          </div>
         </div>
       </div>
 
-      <div class="main">
-        <div class="card composer">
-          <div class="bar">
-            <select class="method get" id="method">{{methods}}</select>
-            <input type="text" class="url" id="url" value="https://httpbin.org/get" placeholder="https://example.org/api">
-            <button type="button" class="button primary" id="send">Send</button>
-          </div>
-          <div class="options">
-            <span class="label">Requester</span>
-            <select class="field requester" id="requester"></select>
-            <label class="check"><input type="checkbox" id="cookies" checked>Send and keep the cookies of the browser</label>
-          </div>
-          <div class="editors">
-            <div class="editor">
-              <span class="label">Headers</span>
-              <span class="hint">One "Name: value" per line.</span>
-              <textarea class="field" id="headers">Accept: application/json</textarea>
-            </div>
-            <div class="editor">
-              <span class="label">Body</span>
-              <span class="hint">UTF-8. Without a Content-Type, JSON if it starts with { or [.</span>
-              <textarea class="field" id="body"></textarea>
-            </div>
-          </div>
-          <div class="save">
-            <span class="label">Save as</span>
-            <input type="text" class="field name" id="name" placeholder="Name (method and address if empty)">
-            <button type="button" class="button" id="save">Save</button>
-            <span class="status" id="status"></span>
-          </div>
-        </div>
+      <div class="actions">
+        <span class="status" id="save-status"></span>
+        <button type="button" class="button" id="save">Save request</button>
+      </div>
+    </div>
+  </div>
 
-        <div class="card response" id="response">
-          <div class="placeholder" id="response-empty">
-            <span class="big">No response yet</span>
-            Send a request to see its status, headers and body here.
-          </div>
-          <div class="content hidden" id="response-content">
-            <div class="summary">
-              <span class="code" id="response-status"></span>
-              <div class="metrics">
-                <div class="metric"><span class="label">Time</span><span class="value" id="response-time"></span></div>
-                <div class="metric"><span class="label">First byte</span><span class="value" id="response-first-byte"></span></div>
-                <div class="metric"><span class="label">Size</span><span class="value" id="response-size"></span></div>
-                <div class="metric"><span class="label">Requester</span><span class="value" id="response-requester"></span></div>
-              </div>
-            </div>
-            <div class="address" id="response-address"></div>
-            <div class="tabs">
-              <button type="button" class="tab active" id="tab-body">Body</button>
-              <button type="button" class="tab" id="tab-headers">Headers <span class="badge">0</span></button>
-              <button type="button" class="tab" id="tab-request">Request</button>
-            </div>
-            <div class="panel active" id="panel-body"><pre id="body-text"></pre></div>
-            <div class="panel" id="panel-headers"><div id="headers-list"></div></div>
-            <div class="panel" id="panel-request">
-              <div class="request-line" id="request-line"></div>
-              <div id="request-headers"></div>
-            </div>
-          </div>
-        </div>
+  <div class="backdrop" id="backdrop"></div>
+  <div class="sheet" id="sheet">
+    <div class="card-title">Saved requests <span class="badge" id="saved-count">0</span>
+      <button type="button" class="close" id="sheet-close" title="Close">×</button>
+    </div>
+    <div class="saved" id="saved"></div>
+  </div>
+
+  <div class="modal" id="modal">
+    <div class="dialog">
+      <h2>Save request</h2>
+      <p class="muted">Saving it under the name of a saved request replaces that one.</p>
+      <span class="label">Name</span>
+      <input type="text" class="field" id="name" placeholder="Name of the request">
+      <div class="buttons">
+        <button type="button" class="button" id="save-cancel">Cancel</button>
+        <button type="button" class="button primary" id="save-confirm">Save</button>
       </div>
     </div>
   </div>

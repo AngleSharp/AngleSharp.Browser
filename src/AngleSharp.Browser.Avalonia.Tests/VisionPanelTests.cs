@@ -233,6 +233,20 @@ public class VisionPanelTests
         Assert.That(text, Does.Contain("(in 29 days)").Or.Contain("(in 30 days)"));
     }
 
+    [AvaloniaTest]
+    public async Task TheAboutPageShowsTheVisionLogo()
+    {
+        using var page = new AboutPage("light", () => { });
+        await page.LoadAsync();
+        await WaitUntil(page, d => d!.QuerySelector<IHtmlImageElement>(".logo img") is { IsCompleted: true });
+
+        var logo = await page.Engine.InvokeAsync(d => d!.QuerySelector<IHtmlImageElement>(".logo img")!);
+
+        // a vector, so it stays sharp at any scale
+        Assert.That(logo.Source, Does.StartWith("data:image/svg+xml;"));
+        Assert.That(logo.AlternativeText, Is.EqualTo("Vision logo"));
+    }
+
     private static string Tree(IDocument? document) => document!.GetElementById("tree")!.TextContent;
 
     private static IElement? FindRow(IDocument? document, string tag)

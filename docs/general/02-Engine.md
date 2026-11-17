@@ -14,6 +14,8 @@ The `BrowserEngine` represents a browsing context with its history, i.e., what a
 | `LoadHtmlAsync(html, address)` | Shows the given markup, optionally pretending it came from the given address. |
 | `ReloadAsync()` | Loads the current address again. |
 | `GoBackAsync()`, `GoForwardAsync()` | Moves through the history. |
+| `GoAsync(delta)` | Jumps several entries back (negative) or forward. |
+| `History` | A copy of the entries (address and title) and the index of the current one; `Back` and `Forward` list the entries before and after it, the closest first. |
 | `Url`, `Title`, `IsLoading` | The state of the current page. |
 | `CanGoBack`, `CanGoForward` | If there is something to go to. |
 
