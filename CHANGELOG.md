@@ -1,6 +1,6 @@
 # 0.2.0
 
-Released on Friday, November 13 2026.
+Released on Wednesday, November 18 2026.
 
 - Fixed `BrowserView` not passing a modifier key pressed on its own (Control, Shift, Alt, Meta) to the page, e.g. a game firing on Control
 - Fixed callers of the engine (e.g. awaiting `PrepareFrameAsync` and rasterizing the frame without a synchronization context) continuing on the event loop, which held up the scripts of the page
