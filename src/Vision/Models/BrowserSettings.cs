@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Vision.Audio;
 
 /// <summary>
 /// The user's settings, which apply to every browsing context (window) created after they were
@@ -14,7 +15,7 @@ using System.Text.Json.Serialization;
 /// </summary>
 public sealed record BrowserSettings
 {
-    public const string DefaultStartPage = "https://me.florian-rappl.de";
+    public const string DefaultStartPage = "vision:start";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -110,6 +111,10 @@ public sealed record BrowserSettings
             IsScriptingEnabled = IsScriptingEnabled,
             UserAgent = UserAgent,
             FontSize = FontSize,
+            // a browser lets its user select (and copy) the text of a page
+            IsTextSelectionEnabled = true,
+            // the audio of pages is heard (all windows share the device)
+            AudioOutput = OpenAlAudioOutput.Shared,
         };
 
         foreach (var header in DefaultHeaders)

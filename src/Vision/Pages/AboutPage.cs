@@ -26,8 +26,8 @@ public sealed class AboutPage(string? colorScheme, Action close) : HtmlPage("abo
     protected override string Prepare(string html)
     {
         using var logo = new MemoryStream();
-        OpenResource("logo.png").CopyTo(logo);
-        return html.Replace("{{logo}}", $"data:image/png;base64,{Convert.ToBase64String(logo.ToArray())}");
+        OpenResource("logo.svg").CopyTo(logo);
+        return html.Replace("{{logo}}", $"data:image/svg+xml;base64,{Convert.ToBase64String(logo.ToArray())}");
     }
 
     protected override void Wire(IDocument document)

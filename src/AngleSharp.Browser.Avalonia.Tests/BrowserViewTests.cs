@@ -31,6 +31,23 @@ public class BrowserViewTests
     }
 
     [AvaloniaTest]
+    public async Task PressingAModifierOnItsOwnSendsItToThePage()
+    {
+        var page = "data:text/html," + Uri.EscapeDataString("<!doctype html><title>Keys</title><script>window.seen = []; document.addEventListener('keydown', function (e) { window.seen.push(e.key + ':' + e.keyCode); });</script>");
+        var view = new BrowserView { Source = page };
+        var window = Show(view);
+        await WaitUntil(() => view.Engine?.Title == "Keys");
+        view.Focus();
+
+        // a game firing on Control (keyCode 17), like the Spaceshoot sample of Piral
+        window.KeyPress(Key.LeftCtrl, RawInputModifiers.Control, PhysicalKey.ControlLeft, null);
+        window.KeyPress(Key.RightShift, RawInputModifiers.Shift, PhysicalKey.ShiftRight, null);
+
+        await WaitUntilAsync(async () => await view.Engine!.EvaluateScriptAsync("window.seen.join()") as string == "Control:17,Shift:16");
+        window.Close();
+    }
+
+    [AvaloniaTest]
     public void WithoutASourceNoEngineIsCreated()
     {
         var view = new BrowserView();

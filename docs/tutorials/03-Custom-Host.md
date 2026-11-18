@@ -85,8 +85,9 @@ Translate the events of the framework. All of these are fire-and-forget from the
 | UI event | Engine call |
 | --- | --- |
 | Pointer moved | `MovePointer(x, y)` |
-| Primary button pressed / released | `PointerDownAsync` / `PointerUpAsync` |
+| Primary button pressed / released | `PointerDownAsync` (with the click count, for selecting words) / `PointerUpAsync` |
 | Back / forward button pressed | `GoBackAsync` / `GoForwardAsync` |
+| Back / forward button held (its menu) | `History.Back` / `History.Forward`, then `GoAsync(delta)` for the entry chosen |
 | Wheel | `ScrollAsync(-deltaX * distance, -deltaY * distance)` |
 | Key pressed / released | `KeyDownAsync` / `KeyUpAsync`, with the DOM's name of the key |
 | Text entered | `TextInputAsync` |
@@ -98,6 +99,7 @@ Translate the events of the framework. All of these are fire-and-forget from the
 What else makes it feel like a browser:
 
 - Set `BrowserOptions.ClipboardPlatform` with an implementation of `IClipboardPlatform` from AngleSharp.Io.
+- Set `BrowserOptions.IsTextSelectionEnabled`, and put the text of `CopySelectionAsync` on the clipboard for Control+C.
 - Update `ColorScheme` when the theme changes.
 - Draw a scrollbar from `ScrollPosition`, `ScrollHeight` and `ViewportHeight`, and change the position using `ScrollToAsync`.
 - Handle `WindowRequested`, and open a window with an engine from `CreateWindow`.

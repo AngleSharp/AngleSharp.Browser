@@ -14,10 +14,12 @@ The `BrowserEngine` represents a browsing context with its history, i.e., what a
 | `LoadHtmlAsync(html, address)` | Shows the given markup, optionally pretending it came from the given address. |
 | `ReloadAsync()` | Loads the current address again. |
 | `GoBackAsync()`, `GoForwardAsync()` | Moves through the history. |
+| `GoAsync(delta)` | Jumps several entries back (negative) or forward. |
+| `History` | A copy of the entries (address and title) and the index of the current one; `Back` and `Forward` list the entries before and after it, the closest first. |
 | `Url`, `Title`, `IsLoading` | The state of the current page. |
 | `CanGoBack`, `CanGoForward` | If there is something to go to. |
 
-The address goes through `BrowserEngine.NormalizeAddress`, so what a user enters in an address bar works: `example.org` turns into `https://example.org`, while rooted paths of existing files turn into `file:` addresses.
+The address goes through `BrowserEngine.NormalizeAddress`, so what a user enters in an address bar works: `example.org` turns into `https://example.org`, while rooted paths of existing files turn into `file:` addresses. Addresses of the custom schemes of the engine (`BrowserOptions.SchemeHandlers`) stay as they are.
 
 `Url` shows where the engine is going as soon as a navigation starts, like in any browser. A failed navigation does not throw: it raises `Error`, is recorded in the diagnostics, and shows an error page instead.
 

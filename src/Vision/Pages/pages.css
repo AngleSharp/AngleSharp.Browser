@@ -69,6 +69,11 @@ a {
   color: var(--muted);
 }
 
+/* controls are pressed, not selected */
+.button, .tab, .badge {
+  user-select: none;
+}
+
 .button {
   display: inline-block;
   padding: 7px 16px;

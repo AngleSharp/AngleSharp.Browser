@@ -168,6 +168,42 @@
             <Setter Property="Foreground" Value="{DynamicResource ChromeTextBrush}" />
         </Style>
 
+        <!-- the suggestions of the address bar -->
+        <Style Selector="Border.suggestions">
+            <Setter Property="Background" Value="{DynamicResource ChromeMenuBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ChromeDividerBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="0,6" />
+            <Setter Property="BoxShadow" Value="0 4 16 0 #33000000" />
+        </Style>
+        <Style Selector="ListBox.suggestions">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Padding" Value="0" />
+        </Style>
+        <Style Selector="ListBox.suggestions ListBoxItem">
+            <Setter Property="Padding" Value="16,6" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+        <Style Selector="ListBox.suggestions ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ChromeHoverBrush}" />
+        </Style>
+        <Style Selector="ListBox.suggestions ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ChromeFieldBrush}" />
+        </Style>
+        <Style Selector="ListBox.suggestions TextBlock">
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+        <Style Selector="ListBox.suggestions TextBlock.heading">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Foreground" Value="{DynamicResource ChromeTextBrush}" />
+        </Style>
+        <Style Selector="ListBox.suggestions TextBlock.address">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{DynamicResource ChromeAccentBrush}" />
+        </Style>
+
         <!-- the "more" menu -->
         <Style Selector="MenuFlyoutPresenter">
             <Setter Property="Background" Value="{DynamicResource ChromeMenuBrush}" />

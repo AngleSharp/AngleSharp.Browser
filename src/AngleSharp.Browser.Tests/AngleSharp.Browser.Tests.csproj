@@ -11,6 +11,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- tones of a quarter second, made with ffmpeg (sine, 440 Hz) -->
+    <None Include="Media\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\AngleSharp.Browser\AngleSharp.Browser.csproj" />
   </ItemGroup>
 </Project>

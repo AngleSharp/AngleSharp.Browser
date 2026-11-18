@@ -88,7 +88,9 @@ public sealed class LegacyKeyboardEvent : KeyboardEvent
         "ArrowUp" => 38,
         "ArrowRight" => 39,
         "ArrowDown" => 40,
+        "Insert" => 45,
         "Delete" => 46,
+        "Meta" => 91,
         "," => 188,
         "-" => 189,
         "." => 190,
@@ -102,6 +104,8 @@ public sealed class LegacyKeyboardEvent : KeyboardEvent
         " " => "Space",
         "Enter" or "Tab" or "Escape" or "Backspace" or "Delete" or "Home" or "End" or "PageUp" or "PageDown" or "Insert"
             or "ArrowUp" or "ArrowDown" or "ArrowLeft" or "ArrowRight" => key,
+        // the view can't tell the left modifier from the right one
+        "Shift" or "Control" or "Alt" or "Meta" => key + "Left",
         { Length: 1 } when char.IsAsciiLetter(key[0]) => "Key" + char.ToUpperInvariant(key[0]),
         { Length: 1 } when char.IsAsciiDigit(key[0]) => "Digit" + key,
         _ => key.Length > 1 && key[0] == 'F' && key[1..].All(char.IsDigit) ? key : string.Empty,

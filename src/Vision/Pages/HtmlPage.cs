@@ -2,7 +2,9 @@ namespace Vision.Pages;
 
 using System;
 using AngleSharp.Browser;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
 using AngleSharp.Dom;
@@ -17,31 +19,53 @@ using Avalonia.Threading;
 public abstract class HtmlPage : IDisposable
 {
     private readonly string _name;
+    private readonly string? _colorScheme;
+    private BrowserEngine? _engine;
+    private bool _isOwningEngine;
 
     protected HtmlPage(string name, string? colorScheme)
     {
         _name = name;
-        Engine = new BrowserEngine(new BrowserOptions
-        {
-            // the browser's own pages keep no data, and their logic is C#
-            ProfileDirectory = null,
-            IsScriptingEnabled = false,
-            ColorScheme = colorScheme,
-        });
+        _colorScheme = colorScheme;
     }
 
     /// <summary>
-    /// Gets the engine showing the page.
+    /// Gets the engine showing the page: its own one, unless the page was loaded by another
+    /// (see <see cref="Attach"/>).
     /// </summary>
-    public BrowserEngine Engine { get; }
+    public BrowserEngine Engine
+    {
+        get
+        {
+            if (_engine is null)
+            {
+                _isOwningEngine = true;
+                _engine = new BrowserEngine(new BrowserOptions
+                {
+                    // the browser's own pages keep no data, and their logic is C#
+                    ProfileDirectory = null,
+                    IsScriptingEnabled = false,
+                    ColorScheme = _colorScheme,
+                    // e.g. for copying an error or a request out of the diagnostics
+                    IsTextSelectionEnabled = true,
+                });
+            }
+
+            return _engine;
+        }
+    }
 
     /// <summary>
-    /// Loads the page and wires it up.
+    /// Gets the source of the page, with its placeholders filled in.
+    /// </summary>
+    public string GetSource() => Prepare(ReadResource($"{_name}.html").Replace("{{styles}}", ReadResource("pages.css")));
+
+    /// <summary>
+    /// Loads the page in its own engine and wires it up.
     /// </summary>
     public async Task LoadAsync()
     {
-        var html = ReadResource($"{_name}.html").Replace("{{styles}}", ReadResource("pages.css"));
-        await Engine.LoadHtmlAsync(Prepare(html), $"about:{_name}");
+        await Engine.LoadHtmlAsync(GetSource(), $"about:{_name}");
         await Engine.InvokeAsync(document =>
         {
             if (document is not null)
@@ -51,7 +75,26 @@ public abstract class HtmlPage : IDisposable
         });
     }
 
-    public virtual void Dispose() => Engine.Dispose();
+    /// <summary>
+    /// Wires up the page (its <see cref="GetSource"/>) once the given engine loaded it, e.g.,
+    /// from an address of its own. Runs on the engine's event loop.
+    /// </summary>
+    public void Attach(BrowserEngine engine, IDocument document)
+    {
+        if (_engine is null)
+        {
+            _engine = engine;
+            Wire(document);
+        }
+    }
+
+    public virtual void Dispose()
+    {
+        if (_isOwningEngine)
+        {
+            _engine?.Dispose();
+        }
+    }
 
     /// <summary>
     /// Fills in placeholders of the page's source before it is loaded.
@@ -101,6 +144,40 @@ public abstract class HtmlPage : IDisposable
                 area.Value = value;
                 break;
         }
+    }
+
+    /// <summary>
+    /// Reads headers given as one "Name: value" per line (empty lines are skipped), or tells
+    /// which line is not one.
+    /// </summary>
+    protected static bool TryParseHeaders(string text, out Dictionary<string, string> headers, out string problem)
+    {
+        headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        problem = string.Empty;
+        var lines = text.Split('\n');
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i].Trim();
+
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            var separator = line.IndexOf(':');
+            var name = separator > 0 ? line[..separator].Trim() : string.Empty;
+
+            if (name.Length == 0 || name.Any(m => char.IsWhiteSpace(m) || char.IsControl(m) || m > 127))
+            {
+                problem = $"Header line {i + 1} has to look like \"Name: value\".";
+                return false;
+            }
+
+            headers[name] = line[(separator + 1)..].Trim();
+        }
+
+        return true;
     }
 
     protected static bool IsChecked(IDocument document, string id) =>

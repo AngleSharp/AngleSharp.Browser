@@ -1,0 +1,751 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Requester</title>
+<style>
+{{styles}}
+
+:root {
+  --get: #146c2e;
+  --get-soft: #e6f4ea;
+  --post: #8a5300;
+  --post-soft: #fef7e0;
+  --put: #0b57d0;
+  --put-soft: #d3e3fd;
+  --delete: #b3261e;
+  --delete-soft: #fce8e6;
+  --other: #6f42c1;
+  --other-soft: #efe7fb;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --get: #6dd58c;
+    --get-soft: #0f5223;
+    --post: #ffb95c;
+    --post-soft: #4a2c00;
+    --put: #a8c7fa;
+    --put-soft: #0842a0;
+    --delete: #f2b8b5;
+    --delete-soft: #601410;
+    --other: #d0bcff;
+    --other-soft: #3b2a63;
+  }
+}
+
+html,
+body {
+  background: var(--surface);
+}
+
+.page {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 24px 24px 32px;
+}
+
+.hero {
+  display: flex;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.hero .menu {
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  margin-right: 12px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+  cursor: pointer;
+  user-select: none;
+}
+
+.hero .menu:hover {
+  background: var(--surface-strong);
+}
+
+.hero .menu .bar-line {
+  display: block;
+  width: 16px;
+  height: 2px;
+  margin: 3px auto;
+  border-radius: 1px;
+  background: var(--text);
+}
+
+.hero .menu .badge {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.hero .menu .badge.empty {
+  display: none;
+}
+
+.hero .mark {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  margin-right: 14px;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 40px;
+  text-align: center;
+}
+
+.hero h1 {
+  font-size: 22px;
+  font-weight: 500;
+}
+
+.hero p {
+  margin: 2px 0 0;
+}
+
+.card {
+  margin-bottom: 16px;
+  border-radius: 16px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.card-title {
+  display: flex;
+  align-items: center;
+  padding: 14px 16px 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.card-title .badge {
+  margin-left: 8px;
+}
+
+/* the saved requests, in a sheet sliding in from the left */
+.backdrop {
+  display: none;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.backdrop.open {
+  display: block;
+}
+
+.sheet {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 320px;
+  max-width: 85%;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  transform: translateX(-110%);
+  transition: transform 0.2s ease-out;
+}
+
+.sheet.open {
+  transform: none;
+}
+
+.sheet .card-title {
+  padding: 18px 12px 12px 16px;
+}
+
+.sheet .close {
+  margin-left: auto;
+}
+
+.close {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 28px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.close:hover {
+  background: var(--surface-strong);
+}
+
+.saved {
+  padding: 0 8px 8px;
+}
+
+.saved .item {
+  display: flex;
+  align-items: center;
+  padding: 8px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.saved .item:hover {
+  background: var(--surface);
+}
+
+.saved .item.active {
+  background: var(--accent-soft);
+}
+
+.saved .text {
+  flex: 1;
+  min-width: 0;
+  margin-left: 10px;
+}
+
+.saved .name,
+.saved .url {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.saved .name {
+  font-weight: 600;
+}
+
+.saved .url {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.saved .remove {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 24px;
+  cursor: pointer;
+}
+
+.saved .remove:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.saved .none {
+  padding: 12px 8px 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* the methods, in the list and in their field */
+.verb {
+  flex: none;
+  width: 52px;
+  padding: 2px 0;
+  border-radius: 6px;
+  background: var(--other-soft);
+  color: var(--other);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.verb.get { background: var(--get-soft); color: var(--get); }
+.verb.post { background: var(--post-soft); color: var(--post); }
+.verb.put { background: var(--put-soft); color: var(--put); }
+.verb.delete { background: var(--delete-soft); color: var(--delete); }
+
+/* the request */
+.composer {
+  padding: 16px;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.bar .method {
+  flex: none;
+  width: 112px;
+  padding: 8px 10px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 10px 0 0 10px;
+  background: transparent;
+  color: var(--other);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.bar .method.get { color: var(--get); }
+.bar .method.post { color: var(--post); }
+.bar .method.put { color: var(--put); }
+.bar .method.delete { color: var(--delete); }
+
+.bar .url {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.bar .button {
+  flex: none;
+  width: 96px;
+  border-radius: 10px;
+  text-align: center;
+}
+
+.field {
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+select.field {
+  padding: 6px 8px;
+}
+
+.options {
+  display: flex;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.options .label {
+  margin-right: 8px;
+  color: var(--muted);
+}
+
+.options .requester {
+  width: 180px;
+  margin-right: 20px;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.check input {
+  margin: 0 8px 0 0;
+}
+
+.editors {
+  display: flex;
+  margin-top: 16px;
+}
+
+.editor {
+  flex: 1;
+  min-width: 0;
+}
+
+.editor + .editor {
+  margin-left: 12px;
+}
+
+.editor .label,
+.dialog .label {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.editor .hint {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.editor textarea.field {
+  display: block;
+  width: 100%;
+  height: 132px;
+  margin-top: 6px;
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.composer .status {
+  margin-top: 12px;
+  color: var(--muted);
+}
+
+.composer .status:empty {
+  display: none;
+}
+
+/* saving: the button below the response and its dialog */
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.actions .status {
+  flex: 1;
+  min-width: 0;
+  margin-right: 12px;
+  color: var(--muted);
+  text-align: right;
+}
+
+.modal {
+  display: none;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.modal.open {
+  display: block;
+}
+
+.dialog {
+  width: 380px;
+  max-width: 90%;
+  margin: 18vh auto 0;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg);
+}
+
+.dialog h2 {
+  margin-bottom: 4px;
+  font-size: 16px;
+}
+
+.dialog .label {
+  margin-top: 16px;
+}
+
+.dialog .field {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+}
+
+.dialog .buttons {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+.dialog .buttons .button + .button {
+  margin-left: 8px;
+}
+
+.status.saved {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.status.invalid {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* the response */
+.placeholder {
+  padding: 48px 16px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.placeholder .big {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.hidden {
+  display: none;
+}
+
+.content {
+  padding: 16px;
+}
+
+.summary {
+  display: flex;
+  align-items: center;
+}
+
+.code {
+  flex: none;
+  margin-right: 16px;
+  padding: 6px 14px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.code.success { background: var(--success-soft); color: var(--success); }
+.code.redirect { background: var(--warning-soft); color: var(--warning); }
+.code.failure { background: var(--danger-soft); color: var(--danger); }
+
+.metrics {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.metric {
+  flex: 1;
+  min-width: 0;
+  margin-left: 8px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.metric .label {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.metric .value {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.address {
+  margin-top: 10px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.content .tabs {
+  margin-top: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.content .panel {
+  padding: 12px 0 0;
+}
+
+pre {
+  margin: 0;
+  padding: 14px;
+  border-radius: 10px;
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.header {
+  display: flex;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.header:last-child {
+  border-bottom: 0;
+}
+
+.header .name {
+  flex: none;
+  width: 220px;
+  margin-right: 12px;
+  color: var(--accent);
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.header .value {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+
+.request-line {
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+@media (max-width: 860px) {
+  .editors {
+    display: block;
+  }
+
+  .editor + .editor {
+    margin: 12px 0 0;
+  }
+}
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="hero">
+      <button type="button" class="menu" id="menu" title="Saved requests">
+        <span class="bar-line"></span><span class="bar-line"></span><span class="bar-line"></span>
+        <span class="badge empty" id="menu-count">0</span>
+      </button>
+      <div class="mark">{ }</div>
+      <div>
+        <h1>Requester</h1>
+        <p class="muted">Send requests with the requesters of this window, which add its user agent and default headers like they do for pages.</p>
+      </div>
+    </div>
+
+    <div class="main">
+      <div class="card composer">
+        <div class="bar">
+          <select class="method get" id="method">{{methods}}</select>
+          <input type="text" class="url" id="url" value="https://httpbin.org/get" placeholder="https://example.org/api">
+          <button type="button" class="button primary" id="send">Send</button>
+        </div>
+        <div class="options">
+          <span class="label">Requester</span>
+          <select class="field requester" id="requester"></select>
+          <label class="check"><input type="checkbox" id="cookies" checked>Send and keep the cookies of the browser</label>
+        </div>
+        <div class="editors">
+          <div class="editor">
+            <span class="label">Headers</span>
+            <span class="hint">One "Name: value" per line.</span>
+            <textarea class="field" id="headers">Accept: application/json</textarea>
+          </div>
+          <div class="editor">
+            <span class="label">Body</span>
+            <span class="hint">UTF-8. Without a Content-Type, JSON if it starts with { or [.</span>
+            <textarea class="field" id="body"></textarea>
+          </div>
+        </div>
+        <div class="status" id="status"></div>
+      </div>
+
+      <div class="card response" id="response">
+        <div class="placeholder" id="response-empty">
+          <span class="big">No response yet</span>
+          Send a request to see its status, headers and body here.
+        </div>
+        <div class="content hidden" id="response-content">
+          <div class="summary">
+            <span class="code" id="response-status"></span>
+            <div class="metrics">
+              <div class="metric"><span class="label">Time</span><span class="value" id="response-time"></span></div>
+              <div class="metric"><span class="label">First byte</span><span class="value" id="response-first-byte"></span></div>
+              <div class="metric"><span class="label">Size</span><span class="value" id="response-size"></span></div>
+              <div class="metric"><span class="label">Requester</span><span class="value" id="response-requester"></span></div>
+            </div>
+          </div>
+          <div class="address" id="response-address"></div>
+          <div class="tabs">
+            <button type="button" class="tab active" id="tab-body">Body</button>
+            <button type="button" class="tab" id="tab-headers">Headers <span class="badge">0</span></button>
+            <button type="button" class="tab" id="tab-request">Request</button>
+          </div>
+          <div class="panel active" id="panel-body"><pre id="body-text"></pre></div>
+          <div class="panel" id="panel-headers"><div id="headers-list"></div></div>
+          <div class="panel" id="panel-request">
+            <div class="request-line" id="request-line"></div>
+            <div id="request-headers"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <span class="status" id="save-status"></span>
+        <button type="button" class="button" id="save">Save request</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="backdrop" id="backdrop"></div>
+  <div class="sheet" id="sheet">
+    <div class="card-title">Saved requests <span class="badge" id="saved-count">0</span>
+      <button type="button" class="close" id="sheet-close" title="Close">×</button>
+    </div>
+    <div class="saved" id="saved"></div>
+  </div>
+
+  <div class="modal" id="modal">
+    <div class="dialog">
+      <h2>Save request</h2>
+      <p class="muted">Saving it under the name of a saved request replaces that one.</p>
+      <span class="label">Name</span>
+      <input type="text" class="field" id="name" placeholder="Name of the request">
+      <div class="buttons">
+        <button type="button" class="button" id="save-cancel">Cancel</button>
+        <button type="button" class="button primary" id="save-confirm">Save</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -117,6 +117,7 @@ partial class BrowserEngine
         }
 
         var document = _document!;
+        SyncMediaChanges(document);
         var version = Volatile.Read(ref _layoutVersion);
         var time = DateTimeOffset.Now;
         var start = Stopwatch.GetTimestamp();
@@ -187,17 +188,50 @@ partial class BrowserEngine
         }
 
         _isLastFrameAnimating = frame.IsAnimating;
+        ScheduleImageFrame(frame);
 
-        // the first frame of a page tells if it scrolls as a whole, then it gets an overscan
-        if (frame.IsAnimating || (frame is { IsScrollShiftable: true, OverscanTop: 0 } && ViewportHeight > 1))
+        // the first frame of a page tells if it scrolls as a whole, then it gets an overscan; an
+        // animation may only paint differently in the next frame (see TryReuseLastFrame)
+        if (frame is { IsScrollShiftable: true, OverscanTop: 0 } && ViewportHeight > 1)
         {
             Invalidate();
+        }
+        else if (frame.IsAnimating)
+        {
+            Invalidate(isMutation: true);
         }
 
         // the list of an open dropdown is on top of the frame
         var shown = RefreshSelectPopup() is { } popup ? frame.WithOverlay(popup.Overlay) : frame;
         var layout = Stopwatch.GetElapsedTime(start);
         return new BrowserFrame(shown, raster => OnFramePainted(document, new FrameTiming(time, kind, layout, raster) { Metrics = metrics }));
+    }
+
+    /// <summary>
+    /// Asks for a frame once an animated image (e.g. a GIF) in view shows its next frame. Like the
+    /// frame of a mutation that changed nothing, it is the last one, rasterized again: the image
+    /// shows the frame its time has come to, which needs no layout.
+    /// </summary>
+    private void ScheduleImageFrame(RenderedFrame frame)
+    {
+        var next = frame.GetTimeToNextImageFrame();
+
+        try
+        {
+            // a little later than due, to be sure the image shows the next frame
+            _imageFrameTimer.Change(next is { } delay ? delay + TimeSpan.FromMilliseconds(2) : Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private void OnImageFrameDue(object? state)
+    {
+        if (!_isDisposed)
+        {
+            Invalidate(isMutation: true);
+        }
     }
 
     /// <summary>
@@ -211,8 +245,28 @@ partial class BrowserEngine
     {
         metrics = RenderMetrics.None;
 
-        if (_lastFrame is not { } last || !ReferenceEquals(last.Document, document) || last.Width != ViewportWidth || last.Height != ViewportHeight ||
-            _harness.UpdateFrame() is not { } frame)
+        if (_lastFrame is not { } last || !ReferenceEquals(last.Document, document) || last.Width != ViewportWidth || last.Height != ViewportHeight)
+        {
+            return null;
+        }
+
+        // the time goes on for what animates, which the harness brings the frame to if it can
+        if (_isLastFrameAnimating)
+        {
+            // advancing raises PaintInvalidated, which is this very frame
+            _isPainting = true;
+
+            try
+            {
+                AdvanceClock();
+            }
+            finally
+            {
+                _isPainting = false;
+            }
+        }
+
+        if (_harness.UpdateFrame() is not { } frame)
         {
             return null;
         }
@@ -334,6 +388,8 @@ partial class BrowserEngine
             "text" => BrowserCursor.Text,
             _ when info.Href is not null => BrowserCursor.Pointer,
             _ when info.IsTextEntry => BrowserCursor.Text,
+            // the I-beam over text that can be selected, unless the page asks for another cursor
+            "auto" or "" when _options.IsTextSelectionEnabled && ReferenceEquals(hit.Element.Owner, frame.Document) && frame.Frame.HasTextAt(x, frameY) => BrowserCursor.Text,
             _ => BrowserCursor.Default,
         };
         return new PointerTarget(hit.Element, info.Href, cursor, hit.IsInScrollContainer || info.IsListBox);

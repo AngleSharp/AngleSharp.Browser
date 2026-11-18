@@ -3,6 +3,8 @@ namespace AngleSharp.Browser;
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Threading;
+using System.Threading.Tasks;
 using AngleSharp.Io;
 using AngleSharp.Io.Dom;
 using AngleSharp.Io.ServiceWorkerApi;
@@ -50,6 +52,32 @@ public sealed class BrowserOptions
     public IClipboardPlatform? ClipboardPlatform { get; set; }
 
     /// <summary>
+    /// Gets or sets if the text of pages can be selected with the pointer (dragging, a double
+    /// press for a word, a triple one for a paragraph, Shift to extend) and with Ctrl+A. Off by
+    /// default, as the layouts then also record where their text comes from.
+    /// </summary>
+    public bool IsTextSelectionEnabled { get; set; }
+
+    /// <summary>
+    /// Gets or sets where the audio of the pages plays (e.g. an adapter of the platform's audio
+    /// device). If null, it plays silently: media advances in real time, with its events, but
+    /// isn't heard (<see cref="SilentAudioOutput"/>).
+    /// </summary>
+    public IAudioOutput? AudioOutput { get; set; }
+
+    /// <summary>
+    /// Gets the audio formats that play, in the order they are tried; by default those of
+    /// <see cref="AudioCodecs"/> (WAV, MP3, Ogg Vorbis and Ogg Opus).
+    /// </summary>
+    public IList<IAudioCodec> AudioCodecs { get; } = Browser.AudioCodecs.CreateDefault();
+
+    /// <summary>
+    /// Gets or sets if pages may play audible media before the user interacted with them (a
+    /// press or a key). Off by default, like in browsers; muted media always plays.
+    /// </summary>
+    public bool IsAutoplayAllowed { get; set; }
+
+    /// <summary>
     /// Gets or sets the initial viewport width in CSS pixels.
     /// </summary>
     public int ViewportWidth { get; set; } = 1280;
@@ -86,6 +114,14 @@ public sealed class BrowserOptions
     /// configuration before the browsing context is created.
     /// </summary>
     public Func<IConfiguration, IConfiguration>? Configure { get; set; }
+
+    /// <summary>
+    /// Gets the handlers of custom URL schemes by their name (without the colon), e.g., "app"
+    /// answering the requests of "app:settings". A handler answers null if there is nothing at
+    /// the address. Addresses of these schemes are navigated to as entered.
+    /// </summary>
+    public IDictionary<string, Func<Request, CancellationToken, Task<IResponse?>>> SchemeHandlers { get; } =
+        new Dictionary<string, Func<Request, CancellationToken, Task<IResponse?>>>(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Creates the IO options of an engine. Another window of a profile shares its data, but

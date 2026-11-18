@@ -2,6 +2,7 @@ namespace Vision.ViewModels;
 
 using System;
 using AngleSharp.Browser;
+using Vision.Pages;
 
 /// <summary>
 /// What a browser window needs from the application: other windows and the shared settings.
@@ -19,11 +20,21 @@ public interface IBrowserHost
     event EventHandler? ColorSchemeChanged;
 
     /// <summary>
+    /// Gets the page new windows start with.
+    /// </summary>
+    string StartPage { get; }
+
+    /// <summary>
     /// Opens a browser window, which shares the profile of the given engine, if possible.
     /// </summary>
     void OpenWindow(string? address, BrowserEngine? opener);
 
     void OpenSettings();
+
+    /// <summary>
+    /// Creates the settings page, which applies the settings of the browser.
+    /// </summary>
+    HtmlPage CreateSettingsPage(Action close);
 
     void OpenAbout(BrowserEngine owner);
 

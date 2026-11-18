@@ -85,28 +85,9 @@ public sealed class SettingsPage(string? colorScheme, BrowserSettings settings, 
             return false;
         }
 
-        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var lines = GetValue(document, "headers").Split('\n');
-
-        for (var i = 0; i < lines.Length; i++)
+        if (!TryParseHeaders(GetValue(document, "headers"), out var headers, out problem))
         {
-            var line = lines[i].Trim();
-
-            if (line.Length == 0)
-            {
-                continue;
-            }
-
-            var separator = line.IndexOf(':');
-            var name = separator > 0 ? line[..separator].Trim() : string.Empty;
-
-            if (name.Length == 0 || name.Any(m => char.IsWhiteSpace(m) || char.IsControl(m) || m > 127))
-            {
-                problem = $"Header line {i + 1} has to look like \"Name: value\".";
-                return false;
-            }
-
-            headers[name] = line[(separator + 1)..].Trim();
+            return false;
         }
 
         var startPage = GetValue(document, "start-page").Trim();
@@ -114,7 +95,7 @@ public sealed class SettingsPage(string? colorScheme, BrowserSettings settings, 
         var userAgent = GetValue(document, "user-agent").Trim();
         settings = new BrowserSettings
         {
-            StartPage = startPage.Length > 0 ? BrowserEngine.NormalizeAddress(startPage) : BrowserSettings.DefaultStartPage,
+            StartPage = startPage.Length > 0 ? BrowserEngine.NormalizeAddress(startPage, [VisionPages.Scheme]) : BrowserSettings.DefaultStartPage,
             IsScriptingEnabled = IsChecked(document, "scripting"),
             FontSize = fontSize,
             IsPersistent = IsChecked(document, "persistent"),

@@ -52,6 +52,24 @@ public class VisionPanelTests
     }
 
     [AvaloniaTest]
+    public async Task TheTextOfAPanelCanBeSelectedButNotItsTabs()
+    {
+        await _target.LoadHtmlAsync(Page);
+        using var page = new InspectorPage("light", _target);
+        await page.LoadAsync();
+        await WaitUntil(page, d => FindRow(d, "h1") is not null);
+        await page.Engine.PrepareFrameAsync();
+        await page.Engine.PrepareFrameAsync();
+
+        await page.Engine.KeyDownAsync("a", InputModifiers.Control);
+        var all = await page.Engine.CopySelectionAsync();
+        var tabs = await page.Engine.InvokeAsync(d => d!.QuerySelector(".tab")!.TextContent.Trim());
+
+        Assert.That(all, Does.Contain("h1"));
+        Assert.That(all, Does.Not.Contain(tabs));
+    }
+
+    [AvaloniaTest]
     public async Task SelectingAnElementShowsItsAttributesRulesAndComputedStyle()
     {
         await _target.LoadHtmlAsync(Page);
@@ -213,6 +231,20 @@ public class VisionPanelTests
         Assert.That(text, Does.Contain("Root authority"));
         Assert.That(text, Does.Contain("01 02 03 04"));
         Assert.That(text, Does.Contain("(in 29 days)").Or.Contain("(in 30 days)"));
+    }
+
+    [AvaloniaTest]
+    public async Task TheAboutPageShowsTheVisionLogo()
+    {
+        using var page = new AboutPage("light", () => { });
+        await page.LoadAsync();
+        await WaitUntil(page, d => d!.QuerySelector<IHtmlImageElement>(".logo img") is { IsCompleted: true });
+
+        var logo = await page.Engine.InvokeAsync(d => d!.QuerySelector<IHtmlImageElement>(".logo img")!);
+
+        // a vector, so it stays sharp at any scale
+        Assert.That(logo.Source, Does.StartWith("data:image/svg+xml;"));
+        Assert.That(logo.AlternativeText, Is.EqualTo("Vision logo"));
     }
 
     private static string Tree(IDocument? document) => document!.GetElementById("tree")!.TextContent;

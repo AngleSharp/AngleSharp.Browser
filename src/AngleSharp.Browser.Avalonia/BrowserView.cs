@@ -67,7 +67,20 @@ public sealed class BrowserView : Control
         [Key.PageDown] = "PageDown",
         [Key.Home] = "Home",
         [Key.End] = "End",
+        [Key.Insert] = "Insert",
+        [Key.LeftCtrl] = "Control",
+        [Key.RightCtrl] = "Control",
+        [Key.LeftShift] = "Shift",
+        [Key.RightShift] = "Shift",
+        [Key.LeftAlt] = "Alt",
+        [Key.RightAlt] = "Alt",
+        [Key.LWin] = "Meta",
+        [Key.RWin] = "Meta",
     };
+
+    // pressing a modifier on its own is a key of the page (e.g. Control firing in a game), while
+    // the window still gets it for its shortcuts
+    private static bool IsModifierKey(string key) => key is "Control" or "Shift" or "Alt" or "Meta";
 
     private readonly Cursor _arrowCursor = new(StandardCursorType.Arrow);
     private readonly Cursor _handCursor = new(StandardCursorType.Hand);
@@ -262,7 +275,7 @@ public sealed class BrowserView : Control
         {
             case PointerUpdateKind.LeftButtonPressed:
                 Focus();
-                Observe(_engine?.PointerDownAsync(point.Position.X, point.Position.Y, GetModifiers(e.KeyModifiers)));
+                Observe(_engine?.PointerDownAsync(point.Position.X, point.Position.Y, e.ClickCount, GetModifiers(e.KeyModifiers)));
                 e.Handled = true;
                 break;
             case PointerUpdateKind.XButton1Pressed:
@@ -321,11 +334,22 @@ public sealed class BrowserView : Control
             e.Handled = true;
             await PasteAsync(engine);
         }
+        else if (e.Key == Key.C && e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            e.Handled = true;
+            await CopyAsync(engine);
+        }
+        else if (e.Key == Key.A && e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            // the page sees the shortcut, and selects all of its text unless it cancels it
+            e.Handled = true;
+            Observe(engine.KeyDownAsync("a", GetModifiers(e.KeyModifiers)));
+        }
         else if (SpecialKeys.TryGetValue(e.Key, out var key) || !e.KeyModifiers.HasFlag(KeyModifiers.Control) && !e.KeyModifiers.HasFlag(KeyModifiers.Alt))
         {
             // shortcuts with control or alt are left to the window; keys producing
             // characters stay unhandled, as Avalonia only raises TextInput for those
-            e.Handled = key is not null && key != " ";
+            e.Handled = key is not null && key != " " && !IsModifierKey(key);
             Observe(engine.KeyDownAsync(key ?? e.KeySymbol ?? e.Key.ToString(), GetModifiers(e.KeyModifiers)));
         }
     }
@@ -460,6 +484,16 @@ public sealed class BrowserView : Control
             {
                 _isSyncingSource = false;
             }
+        }
+    }
+
+    private async Task CopyAsync(BrowserEngine engine)
+    {
+        var text = await engine.CopySelectionAsync();
+
+        if (text.Length > 0 && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
+        {
+            await clipboard.SetTextAsync(text);
         }
     }
 
