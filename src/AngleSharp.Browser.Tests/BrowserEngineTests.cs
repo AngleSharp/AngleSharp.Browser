@@ -171,6 +171,20 @@ public class BrowserEngineTests
     }
 
     [Test]
+    [TestCase("visible")]
+    [TestCase("hidden")]
+    public async Task ALoadedPageScrollsToTheElementItsAddressNames(string overflow)
+    {
+        // Acid2's "#top": the page arrives there even if the user can't scroll it
+        await _engine.LoadHtmlAsync($"<!doctype html><html style='overflow:{overflow}'><body style='margin:0'><div style='height:2000px'></div><h2 id='top' style='margin:0'>Hello</h2><div style='height:2000px'></div>", "https://example.org/acid2.html#top");
+
+        await _engine.PrepareFrameAsync();
+        await _engine.PrepareFrameAsync();
+
+        Assert.That(_engine.ScrollTop, Is.EqualTo(2000));
+    }
+
+    [Test]
     public async Task WheelScrollsTheIframeUnderThePointer()
     {
         var (nested, _) = await LoadFrameAsync("<!doctype html><body style='margin:0'><div style='height:2000px'></div>");

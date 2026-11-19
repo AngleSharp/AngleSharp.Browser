@@ -68,6 +68,7 @@ public sealed partial class BrowserEngine : IDisposable
     private readonly IEventLoop? _loop;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly NavigationHistory _history = new();
+    private readonly VisitedLinks _visited = new();
     private readonly BrowserDiagnostics _diagnostics = new();
     private readonly MediaHost _media;
     private readonly Timer _heartbeat;
@@ -114,6 +115,8 @@ public sealed partial class BrowserEngine : IDisposable
         {
             Category = DeviceCategory.Screen,
             ColorBits = 32,
+            // a color screen has no monochrome bits (the default of 16 makes (max-monochrome: 0) fail)
+            MonochromeBits = 0,
             DeviceWidth = options.ScreenWidth,
             DeviceHeight = options.ScreenHeight,
             ViewPortWidth = Math.Max(1, options.ViewportWidth),
@@ -138,8 +141,24 @@ public sealed partial class BrowserEngine : IDisposable
             // one loop for the page and its iframes: scripts of all of them run on it, and the
             // layout of the page holds it, as the DOM of an iframe is part of what it lays out
             .WithEventLoop(context => _eventLoop is null ? _eventLoop = new JsEventLoop(context) : new FrameEventLoop(_eventLoop))
-            .WithRenderDevice(_device)
+            // the document of an iframe has a viewport of its own (the renderer sizes it), which its
+            // media queries see as well
+            .WithOnly<IRenderDevice>(context => context.Parent is null ? _device : CreateFrameDevice(context, _device))
             .WithXml()
+            // links to pages shown before match :visited (before the CSS extension wraps the selectors)
+            .WithOnly(_visited.CreateSelectors(() => _context?.Active))
+            .WithOnly<IHtmlParser>(context =>
+            {
+                var parser = new HtmlParser(new HtmlParserOptions { IsScripting = context.IsScripting() }, context);
+                parser.Parsing += (_, ev) =>
+                {
+                    if (ev is AngleSharp.Html.Dom.Events.HtmlParseEvent { Document: { } document })
+                    {
+                        _visited.Record(document, TopLevelOf(context)?.Active);
+                    }
+                };
+                return parser;
+            })
             .WithCss()
             .WithIo(ioOptions)
             .WithCookies(_cookies)
@@ -248,6 +267,30 @@ public sealed partial class BrowserEngine : IDisposable
         _harness.PaintInvalidated += OnPaintInvalidated;
         _heartbeat = new Timer(OnHeartbeat, null, HeartbeatInterval, HeartbeatInterval);
         _imageFrameTimer = new Timer(OnImageFrameDue);
+    }
+
+    private static DefaultRenderDevice CreateFrameDevice(IBrowsingContext context, DefaultRenderDevice device) => new FrameRenderDevice(context)
+    {
+        Category = device.Category,
+        ColorBits = device.ColorBits,
+        MonochromeBits = device.MonochromeBits,
+        DeviceWidth = 300,
+        DeviceHeight = 150,
+        ViewPortWidth = 300,
+        ViewPortHeight = 150,
+        FontSize = device.FontSize,
+        IsScripting = device.IsScripting,
+        Preferences = device.Preferences,
+    };
+
+    private static IBrowsingContext? TopLevelOf(IBrowsingContext? context)
+    {
+        while (context?.Parent is { } parent)
+        {
+            context = parent;
+        }
+
+        return context;
     }
 
     /// <summary>
@@ -752,6 +795,7 @@ public sealed partial class BrowserEngine : IDisposable
             if (active is not null)
             {
                 _history.Push(active.Url, active);
+                _pendingFragmentDocument = active.Url.Contains('#') ? active : null;
                 _diagnostics.OnDocumentChanged(active.Url);
             }
 

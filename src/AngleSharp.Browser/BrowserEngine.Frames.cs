@@ -25,6 +25,8 @@ partial class BrowserEngine
     private volatile bool _isLastFrameAnimating;
     private bool _isSyncingScroll;
     private volatile bool _isPageScrollLocked;
+    // the document whose address has a fragment to scroll to, once all of it is laid out
+    private IDocument? _pendingFragmentDocument;
 
     /// <summary>
     /// What the last frame painted where, together with what the pointer would show for each
@@ -180,6 +182,7 @@ partial class BrowserEngine
         }
 
         AdoptScrollPosition(frame.ScrollTop);
+        ScrollToPendingFragment(document, frame);
         // the content below the pointer may have moved; like other browsers, the hover state
         // waits until scrolling ends, as each change of it needs a layout
         if (!IsScrolling)
@@ -205,6 +208,28 @@ partial class BrowserEngine
         var shown = RefreshSelectPopup() is { } popup ? frame.WithOverlay(popup.Overlay) : frame;
         var layout = Stopwatch.GetElapsedTime(start);
         return new BrowserFrame(shown, raster => OnFramePainted(document, new FrameTiming(time, kind, layout, raster) { Metrics = metrics }));
+    }
+
+    /// <summary>
+    /// Scrolls a newly loaded document to the element its address names (e.g. `page.html#top`),
+    /// once it is parsed and the frame has laid out all of it, unless the page has been scrolled
+    /// already. Like other browsers, also a page that cannot be scrolled by the user (overflow:
+    /// hidden on its root) gets there. Requires exclusive access.
+    /// </summary>
+    private void ScrollToPendingFragment(IDocument document, RenderedFrame frame)
+    {
+        if (!ReferenceEquals(_pendingFragmentDocument, document) || frame.IsPartial || document.ReadyState == DocumentReadyState.Loading)
+        {
+            return;
+        }
+
+        _pendingFragmentDocument = null;
+
+        if (ScrollTop == 0 && new Url(document.Url).Fragment is { Length: > 0 } fragment)
+        {
+            ScrollToFragment(document, fragment);
+            Invalidate();
+        }
     }
 
     /// <summary>
