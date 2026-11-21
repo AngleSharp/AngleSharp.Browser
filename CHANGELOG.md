@@ -1,13 +1,15 @@
-# 0.2.1
+# 0.3.0
 
 Released on tbd.
 
 - Fixed a page loaded with a fragment (e.g. `acid2.html#top`) not being scrolled to the element it names
-- Fixed the rendering of the Acid2 test (AngleSharp.Css 1.5.1, AngleSharp.Io 1.3.4, AngleSharp.Renderer 0.12.1)
-- Added `:visited` to links to pages shown before (partitioned by the site of the page, so pages can't learn of the history elsewhere)
+- Fixed the rendering of the Acid2 test
 - Fixed the media queries of an iframe's document not seeing its viewport, also right after a script resized the iframe
 - Fixed `(max-monochrome: 0)` and the like not matching
-- Improved the Acid3 score from 75 to 94 (AngleSharp 1.10.6, AngleSharp.Css 1.5.1, AngleSharp.Js 1.2.3, AngleSharp.Xml 1.3.1, AngleSharp.Renderer 0.12.1)
+- Fixed a navigated XML document that isn't well-formed failing to load (e.g. in an iframe, without a `load` event); like in browsers it shows the error as a `parsererror` element
+- Improved the Acid3 score from 75 to 94
+- Improved the design of Vision's start page, which shows the six most visited pages and HTML5test as a demo
+- Added `:visited` to links to pages shown before (partitioned by the site of the page, so pages can't learn of the history elsewhere)
 
 # 0.2.0
 

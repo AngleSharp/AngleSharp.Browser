@@ -145,6 +145,8 @@ public sealed partial class BrowserEngine : IDisposable
             // media queries see as well
             .WithOnly<IRenderDevice>(context => context.Parent is null ? _device : CreateFrameDevice(context, _device))
             .WithXml()
+            // an XML document that isn't well-formed shows the error instead of failing to load
+            .With(new ParseErrorDocuments())
             // links to pages shown before match :visited (before the CSS extension wraps the selectors)
             .WithOnly(_visited.CreateSelectors(() => _context?.Active))
             .WithOnly<IHtmlParser>(context =>

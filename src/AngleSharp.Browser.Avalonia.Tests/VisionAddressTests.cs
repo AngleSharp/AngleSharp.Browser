@@ -223,10 +223,11 @@ public class VisionAddressTests
             d.QuerySelectorAll("#pages a").Select(m => m.GetAttribute("href")).ToArray(),
             d.QuerySelector("#most-visited .name")!.TextContent));
         // the pages of Vision have their own section
-        Assert.That(visited, Is.EqualTo(new[] { "https://example.org/7", "https://example.org/6", "https://example.org/5", "https://example.org/4", "https://example.org/3" }));
+        Assert.That(visited, Is.EqualTo(new[] { "https://example.org/7", "https://example.org/6", "https://example.org/5", "https://example.org/4", "https://example.org/3", "https://example.org/2" }));
         Assert.That(heading, Is.EqualTo("Seven"));
-        Assert.That(demos, Has.Length.EqualTo(5));
+        Assert.That(demos, Has.Length.EqualTo(6));
         Assert.That(demos, Does.Contain("https://news.ycombinator.com"));
+        Assert.That(demos, Does.Contain("https://html5test.com"));
         Assert.That(vision, Is.EqualTo(new[] { "vision:requester", "vision:settings", "vision:about" }));
         Assert.That(BrowserSettings.DefaultStartPage, Is.EqualTo("vision:start"));
         pages.Dispose();

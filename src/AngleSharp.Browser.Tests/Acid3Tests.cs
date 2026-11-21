@@ -88,6 +88,27 @@ public class Acid3Tests
         Assert.That(await EvaluateAsync(script), Is.EqualTo("true,false,true"));
     }
 
+    [Test]
+    public async Task FrameWithAnXmlDocumentThatIsNotWellFormedShowsTheError()
+    {
+        using var server = new TestServer(new()
+        {
+            ["/"] = ("text/html", """
+                <!doctype html><script>var notified = false; function notify() { notified = true; }</script>
+                <iframe src="/bad.xml" onload="this.className = 'loaded'"></iframe>
+                """u8.ToArray()),
+            ["/bad.xml"] = ("application/xml", """
+                <html xmlns="http://www.w3.org/1999/xhtml"><body><script>parent.notify()</script><p><strong/> x </strong></p></body></html>
+                """u8.ToArray()),
+        });
+
+        await _engine.NavigateAsync(server.Address);
+        await Eventually(async () => await EvaluateAsync("document.querySelector('iframe').className") == "loaded");
+
+        Assert.That(await EvaluateAsync("document.querySelector('iframe').contentDocument.documentElement.localName"), Is.EqualTo("parsererror"));
+        Assert.That(await EvaluateAsync("String(notified)"), Is.EqualTo("false"));
+    }
+
     private async Task<string> EvaluateAsync(string script) =>
         Convert.ToString(await _engine.EvaluateScriptAsync(script), CultureInfo.InvariantCulture) ?? string.Empty;
 
