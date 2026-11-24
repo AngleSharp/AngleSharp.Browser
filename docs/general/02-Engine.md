@@ -95,7 +95,22 @@ The underlying `IBrowsingContext` is available via `Context`, e.g., to retrieve 
 | `HoverChanged` | The hovered link or the cursor changed. |
 | `ScrollChanged` | The scroll position changed. |
 | `WindowRequested` | The page asks for a new window. See [Configuration](05-Configuration.md#multiple-windows). |
+| `FullscreenChanged` | The page started or ended showing an element fullscreen. See [Fullscreen](#fullscreen). |
 | `Error` | An operation failed, e.g., a navigation or a script. |
+
+## Fullscreen
+
+A page shows an element fullscreen with `requestFullscreen()`, which needs a user activation (a press or a key), like in browsers. The element then covers the viewport (it matches `:fullscreen`), and the engine raises `FullscreenChanged` with `IsFullscreen` being `true`. A host should show the page fullscreen meanwhile, e.g. with a fullscreen window and without its toolbars:
+
+```cs
+engine.FullscreenChanged += (_, _) =>
+{
+    // raised on the engine's thread
+    Dispatcher.UIThread.Post(() => window.WindowState = engine.IsFullscreen ? WindowState.FullScreen : WindowState.Normal);
+};
+```
+
+Esc ends it, as does the page (`document.exitFullscreen()`) or leaving the document. When the user leaves the fullscreen mode of the host another way, call `ExitFullscreenAsync` to end it for the page as well.
 
 ## Diagnostics
 

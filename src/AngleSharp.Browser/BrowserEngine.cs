@@ -92,6 +92,11 @@ public sealed partial class BrowserEngine : IDisposable
     private volatile bool _isPainting;
     private volatile bool _isDisposed;
 
+    // A browser serializes colors as CSSOM says (e.g. getComputedStyle gives "rgb(0, 128, 0)"
+    // for an opaque color), while AngleSharp.Css keeps "rgba(0, 128, 0, 1)" for its library
+    // users unless asked to. The switch is process-wide, which a browser process is.
+    static BrowserEngine() => AngleSharp.Css.Values.CssColorValue.UseSpecSerialization = true;
+
     /// <summary>
     /// Creates a new browser engine.
     /// </summary>
@@ -110,6 +115,7 @@ public sealed partial class BrowserEngine : IDisposable
         _options = options;
         _media = new MediaHost(options);
         _media.Changed += OnMediaChanged;
+        _fullscreen = new Fullscreen(() => _media.HasUserActivation, OnFullscreenChanged);
 
         _device = new DefaultRenderDevice
         {
@@ -144,11 +150,15 @@ public sealed partial class BrowserEngine : IDisposable
             // the document of an iframe has a viewport of its own (the renderer sizes it), which its
             // media queries see as well
             .WithOnly<IRenderDevice>(context => context.Parent is null ? _device : CreateFrameDevice(context, _device))
+            // shows responses that aren't documents (e.g. images) like a browser; before the
+            // extensions, which register their creators at it (e.g. XML and SVG)
+            .WithOnly<IDocumentFactory>(new BrowserDocumentFactory())
             .WithXml()
             // an XML document that isn't well-formed shows the error instead of failing to load
             .With(new ParseErrorDocuments())
             // links to pages shown before match :visited (before the CSS extension wraps the selectors)
             .WithOnly(_visited.CreateSelectors(() => _context?.Active))
+            .With(_fullscreen)
             .WithOnly<IHtmlParser>(context =>
             {
                 var parser = new HtmlParser(new HtmlParserOptions { IsScripting = context.IsScripting() }, context);
@@ -177,7 +187,9 @@ public sealed partial class BrowserEngine : IDisposable
         {
             config = config
                 .WithConsoleLogger(_ => new BrowserDiagnostics.ConsoleLogger(_diagnostics))
-                .WithJs();
+                .WithJs()
+                // the modules of paint worklets (CSS.paintWorklet.addModule)
+                .With<AngleSharp.Css.Painting.IPaintWorkletModuleLoader>(_ => new PaintWorklets(OnPaintWorkletChanged));
         }
 
         // the top-level context shares the engine's history (window.history), frames get their own
@@ -222,6 +234,8 @@ public sealed partial class BrowserEngine : IDisposable
             };
             requester.Requested += (_, ev) => _diagnostics.OnRequested(((RequestEvent)ev).Request, ((RequestEvent)ev).Response);
         }
+
+        _context.GetService<ICssDefaultStyleSheetProvider>()?.AppendDefault(Fullscreen.DefaultStyle);
 
         if (options.IsScriptingEnabled)
         {
@@ -349,6 +363,25 @@ public sealed partial class BrowserEngine : IDisposable
     /// Gets the currently displayed document, if any.
     /// </summary>
     public IDocument? Document => _document;
+
+    /// <summary>
+    /// Gets if the page shows an element fullscreen (Fullscreen API), which the host shows
+    /// fullscreen as well. See <see cref="FullscreenChanged"/>.
+    /// </summary>
+    public bool IsFullscreen => _isFullscreen;
+
+    /// <summary>
+    /// Raised when the page starts or ends showing an element fullscreen (see
+    /// <see cref="IsFullscreen"/>). Raised on the engine's thread.
+    /// </summary>
+    public event EventHandler? FullscreenChanged;
+
+    /// <summary>
+    /// Ends showing an element of the page fullscreen, e.g. when the host leaves its own
+    /// fullscreen mode.
+    /// </summary>
+    /// <returns>The task finishing once it ended.</returns>
+    public Task ExitFullscreenAsync() => InvokeAsync(document => _fullscreen.ExitAll(document));
 
     /// <summary>
     /// Gets the address of the currently displayed document, or the address being navigated
@@ -786,6 +819,8 @@ public sealed partial class BrowserEngine : IDisposable
             _pressed = null;
             _seekingMedia = null;
             _focusedFrameDocument = null;
+            // a document that was left shows nothing fullscreen anymore
+            OnFullscreenChanged(false);
             _hoveredFrames.Clear();
             _pointerFrame = null;
             _wasReadyForLayout = false;

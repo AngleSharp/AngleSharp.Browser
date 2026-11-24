@@ -44,8 +44,8 @@ public class Acid3Tests
         // what the link's class changing does after the frame loaded in Acid3
         await _engine.EvaluateScriptAsync("document.getElementById('shown').className = 'x'; document.getElementById('other').className = 'x';");
 
-        Assert.That(await EvaluateAsync("getComputedStyle(document.getElementById('shown')).color"), Is.EqualTo("rgba(0, 128, 0, 1)"));
-        Assert.That(await EvaluateAsync("getComputedStyle(document.getElementById('other')).color"), Is.EqualTo("rgba(255, 0, 0, 1)"));
+        Assert.That(await EvaluateAsync("getComputedStyle(document.getElementById('shown')).color"), Is.EqualTo("rgb(0, 128, 0)"));
+        Assert.That(await EvaluateAsync("getComputedStyle(document.getElementById('other')).color"), Is.EqualTo("rgb(255, 0, 0)"));
         Assert.That(await EvaluateAsync("document.querySelectorAll(':link').length"), Is.EqualTo("1"));
     }
 

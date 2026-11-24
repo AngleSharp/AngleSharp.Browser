@@ -41,6 +41,7 @@ The following APIs cover most day-to-day tasks:
 | `HoveredLink`, `Cursor` | What is below the pointer. |
 | `ColorScheme` | The answer to `prefers-color-scheme`; may be changed. |
 | `HasPaintedDocument` | If the current document has been painted at least once. |
+| `IsFullscreen` | If the page shows an element fullscreen. See [Fullscreen](../general/02-Engine.md#fullscreen). |
 | `Diagnostics` | The `BrowserDiagnostics` of the current page. |
 
 ### Methods
@@ -60,6 +61,7 @@ The following APIs cover most day-to-day tasks:
 | `MovePointer`, `MovePointerAsync`, `PointerDownAsync`, `PointerUpAsync`, `ClickAsync` | Pointer input. |
 | `KeyDownAsync`, `KeyUpAsync`, `TextInputAsync` | Keyboard input. |
 | `CopySelectionAsync()` | Gets the selected text for the clipboard. |
+| `ExitFullscreenAsync()` | Ends showing an element fullscreen. |
 | `ScrollAsync(deltaX, deltaY)`, `ScrollToAsync(top, animate)` | Scrolling. |
 | `CreateWindow()`, `CreateWindow(options)` | Creates an engine sharing the profile. |
 | `LoadIconAsync()`, `GetCertificate(host)` | Loads the page's icon, or gets the certificate of a host. |
@@ -68,7 +70,7 @@ All asynchronous methods take an optional `CancellationToken`.
 
 ### Events
 
-`Invalidated`, `StateChanged`, `HoverChanged`, `ScrollChanged`, `WindowRequested`, and `Error`. See [Browser Engine](../general/02-Engine.md#events).
+`Invalidated`, `StateChanged`, `HoverChanged`, `ScrollChanged`, `WindowRequested`, `FullscreenChanged`, and `Error`. See [Browser Engine](../general/02-Engine.md#events).
 
 ## BrowserFrame
 

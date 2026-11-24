@@ -3,6 +3,7 @@ namespace AngleSharp.Browser;
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using AngleSharp.Io;
@@ -23,10 +24,19 @@ public sealed class BrowserOptions
     public string? ProfileDirectory { get; set; }
 
     /// <summary>
-    /// Gets or sets the user agent to report. If null, the default of
-    /// AngleSharp.Io is used.
+    /// Gets or sets the user agent to report. If null, the
+    /// <see cref="DefaultUserAgent"/> is used.
     /// </summary>
     public string? UserAgent { get; set; }
+
+    /// <summary>
+    /// Gets the user agent reported by default, e.g.
+    /// "Mozilla/5.0 (X11; Linux x86_64) AngleSharp.Browser/0.3". It names the
+    /// engine instead of claiming to be another browser: sites (e.g. bot
+    /// protections) check a claim of being Chrome against the way Chrome
+    /// behaves and refuse a browser that claims it without behaving alike.
+    /// </summary>
+    public static string DefaultUserAgent { get; } = CreateDefaultUserAgent();
 
     /// <summary>
     /// Gets the headers added to every request, unless the request sets them
@@ -150,12 +160,30 @@ public sealed class BrowserOptions
         // like any browser: servers (e.g. CDNs keeping files compressed) may send gzip unasked
         options.HttpHandler.AutomaticDecompression = DecompressionMethods.All;
 
-        if (UserAgent is not null)
-        {
-            options.Navigator.UserAgent = UserAgent;
-        }
+        options.Navigator.UserAgent = UserAgent ?? DefaultUserAgent;
 
         ConfigureIo?.Invoke(options);
         return options;
+    }
+
+    private static string CreateDefaultUserAgent()
+    {
+        var version = typeof(BrowserOptions).Assembly.GetName().Version ?? new Version(0, 0);
+        var architecture = RuntimeInformation.OSArchitecture switch
+        {
+            Architecture.Arm64 => "aarch64",
+            Architecture.X86 => "i686",
+            _ => "x86_64",
+        };
+
+        // the platform tokens of the other browsers on the same system
+        var platform = OperatingSystem.IsWindows()
+            ? (RuntimeInformation.OSArchitecture == Architecture.Arm64 ? "Windows NT 10.0; ARM64" : "Windows NT 10.0; Win64; x64")
+            : OperatingSystem.IsMacOS()
+            ? "Macintosh; Intel Mac OS X 10_15_7"
+            : OperatingSystem.IsAndroid()
+            ? "Linux; Android 10; K"
+            : $"X11; Linux {architecture}";
+        return $"Mozilla/5.0 ({platform}) AngleSharp.Browser/{version.Major}.{version.Minor}";
     }
 }

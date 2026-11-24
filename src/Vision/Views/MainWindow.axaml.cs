@@ -27,6 +27,8 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _holdTimer;
     private Button? _heldButton;
     private bool _isHoldHandled;
+    // the state of the window before the page showed something fullscreen
+    private WindowState? _stateBeforeFullscreen;
 
     public MainWindow()
     {
@@ -175,6 +177,7 @@ public partial class MainWindow : Window
         if (_viewModel is not null)
         {
             _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
+            _viewModel.Engine.FullscreenChanged -= OnFullscreenChanged;
         }
 
         _viewModel = DataContext as MainViewModel;
@@ -182,6 +185,50 @@ public partial class MainWindow : Window
         if (_viewModel is not null)
         {
             _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+            _viewModel.Engine.FullscreenChanged += OnFullscreenChanged;
+        }
+    }
+
+    // raised on the engine's thread
+    private void OnFullscreenChanged(object? sender, EventArgs e) =>
+        Dispatcher.UIThread.Post(() => ShowFullscreen(_viewModel?.Engine.IsFullscreen == true));
+
+    /// <summary>
+    /// Shows the window fullscreen with just the page while the page shows something
+    /// fullscreen, and as before afterwards.
+    /// </summary>
+    private void ShowFullscreen(bool isFullscreen)
+    {
+        if (isFullscreen && _stateBeforeFullscreen is null)
+        {
+            _stateBeforeFullscreen = WindowState;
+            Chrome.IsVisible = false;
+            ContentGrid.ColumnDefinitions[2].Width = new GridLength(0);
+            WindowState = WindowState.FullScreen;
+        }
+        else if (!isFullscreen && _stateBeforeFullscreen is { } state)
+        {
+            _stateBeforeFullscreen = null;
+            Chrome.IsVisible = true;
+            WindowState = state;
+
+            if (_viewModel?.IsPanelOpen == true)
+            {
+                ContentGrid.ColumnDefinitions[2].Width = new GridLength(_openedWidth);
+            }
+        }
+    }
+
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+
+        // the user leaving the fullscreen window (e.g. with a key of the platform) ends it for the page as well
+        if (change.Property == WindowStateProperty && _stateBeforeFullscreen is not null && WindowState != WindowState.FullScreen)
+        {
+            _stateBeforeFullscreen = null;
+            Chrome.IsVisible = true;
+            _ = _viewModel?.Engine.ExitFullscreenAsync();
         }
     }
 

@@ -100,6 +100,31 @@ partial class BrowserEngine
         }
     }
 
+    // a paint worklet registered painters, which the images of the page may use (any thread)
+    private volatile bool _hasPaintWorkletChanged;
+
+    private void OnPaintWorkletChanged()
+    {
+        if (!_isDisposed)
+        {
+            _hasPaintWorkletChanged = true;
+            Invalidate(isMutation: true);
+        }
+    }
+
+    /// <summary>
+    /// Lays out the next frame anew if a paint worklet registered painters since the last one.
+    /// Requires exclusive access.
+    /// </summary>
+    private void SyncPaintWorklets()
+    {
+        if (_hasPaintWorkletChanged)
+        {
+            _hasPaintWorkletChanged = false;
+            _needsFullLayout = true;
+        }
+    }
+
     private static bool ShowsMediaControls(IDocument document) =>
         document.QuerySelector("audio[controls]") is not null ||
         document.QuerySelectorAll("iframe").OfType<IHtmlInlineFrameElement>().Any(frame => frame.ContentDocument is { } content && ShowsMediaControls(content));

@@ -193,7 +193,7 @@ public class VisionAddressTests
         Assert.That(links, Is.EqualTo(VisionPages.Available.Select(m => m.Address).ToArray()));
 
         await engine.InvokeAsync(d => ((IHtmlElement)d!.QuerySelector("#pages a[href='vision:about']")!).DoClick());
-        await WaitUntil(engine, d => d?.Url == "vision:about" && d.GetElementById("version")!.TextContent.StartsWith("Version"));
+        await WaitUntil(engine, d => d?.Url == "vision:about" && d.GetElementById("version")?.TextContent.StartsWith("Version") == true);
 
         await engine.NavigateAsync("vision:pages");
         Assert.That(await engine.InvokeAsync(d => d!.GetElementById("notice")), Is.Null);

@@ -85,6 +85,74 @@ public class BrowserEngineTests
         Assert.That(requested, Is.EqualTo(new[] { "app:start", "app:next" }));
     }
 
+    [Test]
+    public async Task ImagesShowTheCandidateOfTheirSrcsetFittingTheirSizes()
+    {
+        // the tractor store's machines: the 200w images were shown at 300px (pixelated)
+        using var server = new TestServer(new()
+        {
+            ["/"] = ("text/html", """<body style="margin:0"><img id=img src="/cat.png" srcset="/cat-200.png 200w, /cat-400.png 400w, /cat-800.png 800w" sizes="300px" style="width:300px">"""u8.ToArray()),
+            ["/cat.png"] = ("image/png", Png(100)),
+            ["/cat-200.png"] = ("image/png", Png(200)),
+            ["/cat-400.png"] = ("image/png", Png(400)),
+            ["/cat-800.png"] = ("image/png", Png(800)),
+        });
+
+        await _engine.NavigateAsync(server.Address);
+        var img = (AngleSharp.Html.Dom.IHtmlImageElement)_engine.Document!.GetElementById("img")!;
+        await _engine.PrepareFrameAsync();
+        await Eventually(() => img.IsCompleted);
+
+        Assert.That(img.ActualSource, Does.EndWith("/cat-400.png"));
+        // 400 pixels for 300px (density 4/3), as browsers give it
+        Assert.That(img.OriginalWidth, Is.EqualTo(300));
+
+        static byte[] Png(int width)
+        {
+            using var bitmap = new SkiaSharp.SKBitmap(width, 1);
+            using var data = bitmap.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100);
+            return data.ToArray();
+        }
+    }
+
+    [Test]
+    public async Task LazyImagesLoadOnceScrolledNear()
+    {
+        var page = "<!doctype html><body style='margin:0'>" + string.Concat(Enumerable.Range(0, 4).Select(i =>
+            $"<img id=i{i} loading=lazy src='/p{i}.png' style='display:block;width:40px;height:20px'><div style='height:3000px'></div>"));
+        using var server = new TestServer(new()
+        {
+            ["/"] = ("text/html", System.Text.Encoding.UTF8.GetBytes(page)),
+            ["/p0.png"] = ("image/png", Png()),
+            ["/p1.png"] = ("image/png", Png()),
+            ["/p2.png"] = ("image/png", Png()),
+            ["/p3.png"] = ("image/png", Png()),
+        });
+
+        await _engine.NavigateAsync(server.Address);
+        await _engine.PrepareFrameAsync();
+        await _engine.PrepareFrameAsync();
+        var images = Enumerable.Range(0, 4).Select(i => (AngleSharp.Html.Dom.IHtmlImageElement)_engine.Document!.GetElementById($"i{i}")!).ToArray();
+        await Eventually(() => images[0].IsCompleted);
+
+        Assert.That(images.Skip(1).Select(image => ((ILoadableElement)image).CurrentDownload), Is.All.Null);
+
+        await _engine.ScrollToAsync(6000, animate: false);
+        await _engine.PrepareFrameAsync();
+        await Eventually(() => images[2].IsCompleted);
+
+        // the ones passed by (above the margin) or still far below stay unloaded
+        Assert.That(((ILoadableElement)images[1]).CurrentDownload, Is.Null);
+        Assert.That(((ILoadableElement)images[3]).CurrentDownload, Is.Null);
+
+        static byte[] Png()
+        {
+            using var bitmap = new SkiaSharp.SKBitmap(40, 20);
+            using var data = bitmap.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100);
+            return data.ToArray();
+        }
+    }
+
     private async Task<(IDocument Nested, IHtmlInlineFrameElement Frame)> LoadFrameAsync(string frameHtml, string pageStyle = "")
     {
         var srcdoc = System.Net.WebUtility.HtmlEncode(frameHtml);
@@ -145,6 +213,18 @@ public class BrowserEngineTests
         await _engine.ClickAsync(50 + 30, 30 + 20);
 
         Assert.That(clicks, Is.EqualTo(new[] { (30d, 20d) }));
+    }
+
+    [Test]
+    public async Task WhatTheUserDoesIsTrustedAndSubmitsOnce()
+    {
+        await _engine.LoadHtmlAsync("<!doctype html><body style='margin:0'><form id='f'><button id='b' style='width:100px;height:40px'>Add</button></form>" +
+            "<script>window.log = []; document.getElementById('b').addEventListener('click', function (e) { log.push('click ' + e.isTrusted); });" +
+            "document.getElementById('f').addEventListener('submit', function (e) { e.preventDefault(); log.push('submit ' + e.isTrusted); });</script>");
+
+        await _engine.ClickAsync(20, 20);
+
+        Assert.That(await _engine.EvaluateScriptAsync("log.join(',')"), Is.EqualTo("click true,submit true"));
     }
 
     [Test]
@@ -635,6 +715,92 @@ public class BrowserEngineTests
     }
 
     [Test]
+    public async Task HomeEndAndTheArrowKeysMoveTheCursorOfAnInput()
+    {
+        await _engine.LoadHtmlAsync("<input id=name type=text>");
+        var input = (IHtmlInputElement)_engine.Document!.GetElementById("name")!;
+
+        var (x, y) = CenterOf("name");
+        await _engine.ClickAsync(x, y);
+        await Eventually(() => input.IsFocused);
+        await _engine.TextInputAsync("World");
+        await _engine.KeyDownAsync("Home");
+        await _engine.TextInputAsync("Hello ");
+        Assert.That(input.Value, Is.EqualTo("Hello World"));
+        Assert.That(input.SelectionStart, Is.EqualTo(6));
+
+        await _engine.KeyDownAsync("End");
+        await _engine.KeyDownAsync("ArrowLeft");
+        await _engine.KeyDownAsync("ArrowLeft");
+        await _engine.KeyDownAsync("Backspace");
+        Assert.That(input.Value, Is.EqualTo("Hello Wold"));
+
+        await _engine.KeyDownAsync("ArrowRight");
+        await _engine.KeyDownAsync("Delete");
+        Assert.That(input.Value, Is.EqualTo("Hello Wol"));
+        Assert.That(input.SelectionStart, Is.EqualTo(9));
+    }
+
+    [Test]
+    public async Task ShiftWithTheArrowKeysSelectsTextTypingReplaces()
+    {
+        await _engine.LoadHtmlAsync("<input id=name type=text value='Hello World'>");
+        var input = (IHtmlInputElement)_engine.Document!.GetElementById("name")!;
+
+        var (x, y) = CenterOf("name");
+        await _engine.ClickAsync(x, y);
+        await Eventually(() => input.IsFocused);
+        await _engine.KeyDownAsync("ArrowLeft", InputModifiers.Control | InputModifiers.Shift);
+        Assert.That((input.SelectionStart, input.SelectionEnd, input.SelectionDirection), Is.EqualTo((6, 11, "backward")));
+
+        await _engine.TextInputAsync("There");
+        Assert.That(input.Value, Is.EqualTo("Hello There"));
+
+        await _engine.KeyDownAsync("Home", InputModifiers.Shift);
+        await _engine.KeyDownAsync("Backspace");
+        Assert.That(input.Value, Is.Empty);
+    }
+
+    [Test]
+    public async Task TheArrowKeysMoveBetweenTheLinesOfATextArea()
+    {
+        await _engine.LoadHtmlAsync("<textarea id=area>first\nsecond line</textarea>");
+        var area = (IHtmlTextAreaElement)_engine.Document!.GetElementById("area")!;
+
+        var (x, y) = CenterOf("area");
+        await _engine.ClickAsync(x, y);
+        await Eventually(() => area.IsFocused);
+        await _engine.KeyDownAsync("ArrowUp");
+        Assert.That(area.SelectionStart, Is.EqualTo(5));
+
+        await _engine.KeyDownAsync("Home");
+        await _engine.KeyDownAsync("ArrowDown");
+        await _engine.KeyDownAsync("End");
+        await _engine.TextInputAsync("!");
+        Assert.That(area.Value, Is.EqualTo("first\nsecond line!"));
+
+        await _engine.KeyDownAsync("Home", InputModifiers.Control);
+        await _engine.TextInputAsync(">");
+        Assert.That(area.Value, Is.EqualTo(">first\nsecond line!"));
+    }
+
+    [Test]
+    public async Task AValueSetByAScriptMovesTheCursorToItsEnd()
+    {
+        await _engine.LoadHtmlAsync("<input id=name type=text value=abc>");
+        var input = (IHtmlInputElement)_engine.Document!.GetElementById("name")!;
+
+        var (x, y) = CenterOf("name");
+        await _engine.ClickAsync(x, y);
+        await Eventually(() => input.IsFocused);
+        await _engine.KeyDownAsync("Home");
+        await _engine.InvokeAsync(_ => input.Value = "suggested");
+        await _engine.TextInputAsync("!");
+
+        Assert.That(input.Value, Is.EqualTo("suggested!"));
+    }
+
+    [Test]
     public async Task ClickingCheckboxLabelTogglesIt()
     {
         await _engine.LoadHtmlAsync("<label id=label><input id=check type=checkbox> Accept the terms</label>");
@@ -926,6 +1092,107 @@ public class BrowserEngineTests
     }
 
     [Test]
+    public async Task APaintWorkletPaintsTheBackgroundsUsingIt()
+    {
+        var module = Uri.EscapeDataString("registerPaint('fill', class { static get inputProperties() { return ['--color']; } paint(ctx, size, props) { ctx.fillStyle = String(props.get('--color')).trim(); ctx.lineCap = 'round'; ctx.fillRect(0, 0, size.width / 2, size.height); } });");
+        await _engine.LoadHtmlAsync($"<style>body {{ margin: 0 }} div {{ width: 100px; height: 50px; --color: rgb(0, 0, 255); background-image: paint(fill) }}</style><div></div><script>CSS.paintWorklet.addModule('data:text/javascript,{module}')</script>");
+
+        for (var i = 0; i < 20 && PixelOf((await _engine.PrepareFrameAsync())!, 10, 10) != (0, 0, 255); i++)
+        {
+            await Task.Delay(50);
+        }
+
+        var frame = await _engine.PrepareFrameAsync();
+        Assert.That(PixelOf(frame!, 10, 10), Is.EqualTo(((byte)0, (byte)0, (byte)255)));
+        // the painter fills the left half of the box only
+        Assert.That(PixelOf(frame!, 80, 10), Is.EqualTo(((byte)255, (byte)255, (byte)255)));
+    }
+
+    [Test]
+    public async Task ClickingADropdownInALabelOpensIt()
+    {
+        // the label must not click the select again (it once did so endlessly)
+        var select = await LoadDropdownAsync("<label>Strategy <select><option>a<option>b</select></label>");
+
+        await _engine.ClickAsync(10, 30);
+
+        Assert.That(_engine.IsSelectPopupOpen, Is.True);
+        Assert.That(_engine.Document!.ActiveElement, Is.EqualTo(select));
+    }
+
+    [Test]
+    public async Task DraggingASliderSetsItsValue()
+    {
+        await _engine.LoadHtmlAsync("<style>body { margin: 0 } input { display: block; width: 100px; height: 20px; margin: 0; padding: 0; border: 0 }</style><input type=range min=0 max=10 value=5>");
+        await _engine.PrepareFrameAsync();
+        var slider = (IHtmlInputElement)_engine.Document!.QuerySelector("input")!;
+        var events = new List<string>();
+        slider.AddEventListener("input", (_, _) => events.Add("input:" + slider.Value));
+        slider.AddEventListener("change", (_, _) => events.Add("change:" + slider.Value));
+
+        await _engine.PointerDownAsync(20, 10);
+        await _engine.MovePointerAsync(80, 10);
+        await _engine.PointerUpAsync(80, 10);
+
+        Assert.That(slider.Value, Is.EqualTo("8"));
+        Assert.That(events, Is.EqualTo(new[] { "input:2", "input:8", "change:8" }));
+
+        await PressKeyAsync("ArrowLeft");
+        await PressKeyAsync("End");
+        Assert.That(slider.Value, Is.EqualTo("10"));
+    }
+
+    [Test]
+    public async Task APopoverTargetButtonTogglesItsPopover()
+    {
+        await _engine.LoadHtmlAsync("<style>body { margin: 0 } button { display: block; width: 100px; height: 20px }</style><button popovertarget=pop>Toggle</button><div id=pop popover>Hint</div>");
+        await _engine.PrepareFrameAsync();
+        var popover = (IHtmlElement)_engine.Document!.GetElementById("pop")!;
+
+        await _engine.ClickAsync(10, 10);
+        Assert.That(popover.IsPopoverOpen(), Is.True);
+
+        await _engine.ClickAsync(10, 10);
+        Assert.That(popover.IsPopoverOpen(), Is.False);
+
+        // a press outside of it closes it, as does Esc
+        await _engine.ClickAsync(10, 10);
+        await _engine.ClickAsync(10, 500);
+        Assert.That(popover.IsPopoverOpen(), Is.False);
+
+        await _engine.ClickAsync(10, 10);
+        await PressKeyAsync("Escape");
+        Assert.That(popover.IsPopoverOpen(), Is.False);
+    }
+
+    [Test]
+    public async Task AClickedButtonShowsAnElementFullscreenUntilEscape()
+    {
+        await _engine.LoadHtmlAsync("<style>body { margin: 0 } button { display: block; width: 100px; height: 20px } #v { width: 50px; height: 50px }</style>" +
+            "<button onclick=\"document.getElementById('v').requestFullscreen()\">Go</button><div id=v></div>" +
+            "<script>window.log = []; document.addEventListener('fullscreenchange', function () { log.push(document.fullscreenElement ? document.fullscreenElement.id : 'none'); });" +
+            "document.documentElement.requestFullscreen().catch(function () { log.push('denied'); });</script>");
+        await _engine.PrepareFrameAsync();
+        var changes = 0;
+        _engine.FullscreenChanged += (_, _) => changes++;
+
+        await _engine.ClickAsync(10, 10);
+        await _engine.PrepareFrameAsync();
+        var video = _engine.Document!.GetElementById("v")!;
+        Assert.That(_engine.IsFullscreen, Is.True);
+        Assert.That(video.Matches(":fullscreen"), Is.True);
+        Assert.That(video.GetBoundingClientRect().Width, Is.EqualTo(800));
+
+        await PressKeyAsync("Escape");
+        await _engine.PrepareFrameAsync();
+        Assert.That(_engine.IsFullscreen, Is.False);
+        Assert.That(video.Matches(":fullscreen"), Is.False);
+        Assert.That(changes, Is.EqualTo(2));
+        // without a user activation the page can't, and the page is told of each change
+        Assert.That(Convert.ToString(await _engine.EvaluateScriptAsync("log.join(',')")), Is.EqualTo("denied,v,none"));
+    }
+
+    [Test]
     public async Task ClickingARowOfADropdownSelectsIt()
     {
         var select = await LoadDropdownAsync("<select><option>a<option>b<option>c</select>");
@@ -1166,7 +1433,7 @@ public class BrowserEngineTests
     {
         var select = await LoadDropdownAsync("<style>body { color: rgb(200, 0, 0) }</style><select><option>a</select>");
 
-        Assert.That(select.ComputeCurrentStyle().GetPropertyValue("color"), Is.EqualTo("rgba(0, 0, 0, 1)"));
+        Assert.That(select.ComputeCurrentStyle().GetPropertyValue("color"), Is.EqualTo("rgb(0, 0, 0)"));
     }
 
     [Test]
@@ -1466,10 +1733,36 @@ public class BrowserEngineTests
 
         await _engine.NavigateAsync(server.Address);
         var img = (ILoadableElement)_engine.Document!.QuerySelector("img")!;
+        // the frame showing it loads it
+        await _engine.PrepareFrameAsync();
         await Eventually(() => img.CurrentDownload?.Task.IsCompleted == true);
         var image = await _engine.PaintAsync();
 
         Assert.That(image, Is.Not.Null);
+    }
+
+    [Test]
+    public async Task NavigatedImagesAreShownInADocumentOfTheirOwn()
+    {
+        var png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==");
+        using var server = new TestServer(new()
+        {
+            ["/"] = ("text/html", "<iframe src='/red.png'></iframe>"u8.ToArray()),
+            ["/red.png"] = ("image/png", png),
+        });
+
+        await _engine.NavigateAsync(server.Address + "red.png");
+        var document = _engine.Document!;
+
+        Assert.That(document.ContentType, Is.EqualTo("image/png"));
+        Assert.That(document.QuerySelector("body > img")?.GetAttribute("src"), Is.EqualTo(document.Url));
+        await Eventually(() => document.ReadyState == DocumentReadyState.Complete);
+
+        await _engine.NavigateAsync(server.Address);
+        var frame = (IHtmlInlineFrameElement)_engine.Document!.QuerySelector("iframe")!;
+        await Eventually(() => frame.ContentDocument?.QuerySelector("img") is not null);
+
+        Assert.That(frame.ContentDocument!.Body!.ChildElementCount, Is.EqualTo(1));
     }
 
     [Test]
@@ -1495,6 +1788,21 @@ public class BrowserEngineTests
         await _engine.NavigateAsync(server.Address);
 
         Assert.That(server.LastUserAgent, Is.EqualTo(_engine.Document!.DefaultView!.Navigator.UserAgent));
+    }
+
+    [Test]
+    public async Task UserAgentNamesTheEngineInsteadOfAnotherBrowser()
+    {
+        using var server = new TestServer(new()
+        {
+            ["/"] = ("text/html", "<p>Hi</p>"u8.ToArray()),
+        });
+
+        await _engine.NavigateAsync(server.Address);
+
+        Assert.That(server.LastUserAgent, Is.EqualTo(BrowserOptions.DefaultUserAgent));
+        Assert.That(server.LastUserAgent, Does.StartWith("Mozilla/5.0 (").And.Contain(") AngleSharp.Browser/"));
+        Assert.That(server.LastUserAgent, Does.Not.Contain("Chrome").And.Not.Contain("OPR"));
     }
 
     [Test]
@@ -1888,8 +2196,8 @@ public class BrowserEngineTests
         _engine.ColorScheme = "light";
         var lightColor = await _engine.InvokeAsync(document => document!.DefaultView!.GetComputedStyle(document.GetElementById("text")!).GetColor());
 
-        Assert.That(color, Is.EqualTo("rgba(0, 0, 255, 1)"));
-        Assert.That(lightColor, Is.EqualTo("rgba(255, 0, 0, 1)"));
+        Assert.That(color, Is.EqualTo("rgb(0, 0, 255)"));
+        Assert.That(lightColor, Is.EqualTo("rgb(255, 0, 0)"));
     }
 
     [Test]
@@ -2208,7 +2516,9 @@ public class BrowserEngineTests
         for (var i = 0; i < 8; i++)
         {
             await Task.Delay(40);
-            pixels.Add(PixelOf((await _engine.PrepareFrameAsync())!, 58, 42));
+            // right of the box (60px wide, its center at 30, 70), where its corners pass a
+            // quarter of the time: frames over 115 degrees show it and the page behind it
+            pixels.Add(PixelOf((await _engine.PrepareFrameAsync())!, 66, 70));
         }
 
         var kinds = _engine.Diagnostics.Frames.Skip(start).Select(frame => frame.Kind).ToList();
@@ -2231,6 +2541,8 @@ public class BrowserEngineTests
             0x3B,
         ];
         await _engine.LoadHtmlAsync($"<!doctype html><body style='margin:0'><img src='data:image/gif;base64,{Convert.ToBase64String(gif)}' style='width:40px;height:40px'>");
+        // the frame showing it loads it
+        await _engine.PrepareFrameAsync();
         await Eventually(() => _engine.Document?.QuerySelector("img") is IHtmlImageElement { IsCompleted: true });
         await _engine.PrepareFrameAsync();
         await _engine.PrepareFrameAsync();

@@ -238,6 +238,8 @@ public class VisionPanelTests
     {
         using var page = new AboutPage("light", () => { });
         await page.LoadAsync();
+        // the frame showing it loads it
+        await page.Engine.PrepareFrameAsync();
         await WaitUntil(page, d => d!.QuerySelector<IHtmlImageElement>(".logo img") is { IsCompleted: true });
 
         var logo = await page.Engine.InvokeAsync(d => d!.QuerySelector<IHtmlImageElement>(".logo img")!);

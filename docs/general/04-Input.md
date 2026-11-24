@@ -58,7 +58,14 @@ Console.WriteLine(await engine.CopySelectionAsync());
 Keys are named by their DOM key value, e.g., `"a"`, `"Enter"`, `"Backspace"`, `"Tab"`, or `"ArrowDown"`. Keys and text are separate on purpose, just like in most UI frameworks:
 
 - `KeyDownAsync` and `KeyUpAsync` fire the keyboard events and perform the actions of keys, e.g., Tab moving the focus, or Enter submitting a form.
-- `TextInputAsync` enters text into the focused text field. It works for whole strings, too.
+- `TextInputAsync` enters text into the focused text field at its cursor, replacing the selected text. It works for whole strings, too.
+
+In a text field (`input` or `textarea`) the keys edit like in browsers. The cursor is the field's `selectionStart` and `selectionEnd`, so scripts see it and can place it:
+
+- The left and right keys move the cursor, by words with Ctrl (or Alt). Home and End go to the start and end of the line, with Ctrl of the whole text. In a `textarea` the up and down keys go to the line above and below.
+- Shift extends the selection, Ctrl+A (or Cmd+A) selects all of the text.
+- Backspace and Delete remove the selected text, or the character (with Ctrl the word) before or after the cursor.
+- Focusing a field by clicking it puts the cursor at the end of its text; tabbing into an `input` selects its text.
 
 ```cs
 await engine.ClickAsync(100, 200);
