@@ -22,6 +22,8 @@ using AngleSharp.Media;
 using AngleSharp.Renderer;
 using AngleSharp.Scripting;
 using AngleSharp.Renderer.Rendering;
+using AngleSharp.Wasm;
+using AngleSharp.Xml;
 
 /// <summary>
 /// A UI-agnostic browser: it loads documents, paints the active document
@@ -187,7 +189,13 @@ public sealed partial class BrowserEngine : IDisposable
         {
             config = config
                 .WithConsoleLogger(_ => new BrowserDiagnostics.ConsoleLogger(_diagnostics))
-                .WithJs()
+                .WithJs(DomRegistrations.Combine(
+                    CssDom.Register,
+                    IoDom.Register,
+                    WasmDom.Register,
+                    RendererDom.Register,
+                    XmlDom.Register,
+                    BrowserDom.Register))
                 // the modules of paint worklets (CSS.paintWorklet.addModule)
                 .With<AngleSharp.Css.Painting.IPaintWorkletModuleLoader>(_ => new PaintWorklets(OnPaintWorkletChanged));
         }
