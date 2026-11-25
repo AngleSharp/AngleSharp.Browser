@@ -195,7 +195,9 @@ public sealed partial class BrowserEngine : IDisposable
                     WasmDom.Register,
                     RendererDom.Register,
                     XmlDom.Register,
-                    BrowserDom.Register))
+                    BrowserDom.Register,
+                    // what the generated registrations above miss
+                    UpstreamDom.Register))
                 // the modules of paint worklets (CSS.paintWorklet.addModule)
                 .With<AngleSharp.Css.Painting.IPaintWorkletModuleLoader>(_ => new PaintWorklets(OnPaintWorkletChanged));
         }
