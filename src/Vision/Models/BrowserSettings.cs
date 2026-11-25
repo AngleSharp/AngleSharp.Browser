@@ -44,7 +44,7 @@ public sealed record BrowserSettings
     public string? ProfileDirectory { get; init; }
 
     /// <summary>
-    /// Gets the user agent to report; null for the default of AngleSharp.
+    /// Gets the user agent to report; null for the engine's default (BrowserOptions.DefaultUserAgent).
     /// </summary>
     public string? UserAgent { get; init; }
 

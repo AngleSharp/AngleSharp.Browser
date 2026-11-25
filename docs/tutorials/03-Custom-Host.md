@@ -103,3 +103,4 @@ What else makes it feel like a browser:
 - Update `ColorScheme` when the theme changes.
 - Draw a scrollbar from `ScrollPosition`, `ScrollHeight` and `ViewportHeight`, and change the position using `ScrollToAsync`.
 - Handle `WindowRequested`, and open a window with an engine from `CreateWindow`.
+- Handle `FullscreenChanged` to show the page fullscreen while `IsFullscreen`, and call `ExitFullscreenAsync` when the user leaves the fullscreen mode of the host.

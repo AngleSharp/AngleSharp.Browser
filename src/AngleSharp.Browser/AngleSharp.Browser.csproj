@@ -7,18 +7,37 @@
     <PackageTags>html;css;javascript;browser;rendering;headless;anglesharp;angle</PackageTags>
   </PropertyGroup>
 
+  <!-- Marks the package trimmable and AOT-compatible, and runs the trim, AOT and single-file
+       analyzers on every build. Only the .NETCoreApp targets support it; the SDK warns on the
+       others. Keyed on TargetFramework because TargetFrameworkIdentifier is not set yet when the
+       project's own properties are evaluated. -->
+  <PropertyGroup Condition=" '$(TargetFramework)' != 'netstandard2.0' And !$(TargetFramework.StartsWith('net4')) ">
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <!-- IsAotCompatible makes the SDK reference Microsoft.NET.ILLink.Tasks implicitly, at the version
+       its KnownILLinkPack table lists per target (8.0.x for net8.0, 10.0.x for net10.0). Two versions
+       of one package in one project make Visual Studio's NuGet Consolidate tab report it, so every
+       target uses the trimmer of the SDK doing the build instead. Following the SDK's bundled version
+       keeps it current without pinning, and covers the next pair of targets too (net10.0 next to net11.0).
+       KnownILLinkPack is SDK-internal and undocumented: if an SDK renames or reshapes it, this goes
+       inert or fails the restore - drop it then, or once only one .NETCoreApp target is left. -->
+  <ItemGroup>
+    <KnownILLinkPack Update="Microsoft.NET.ILLink.Tasks" ILLinkPackVersion="$(BundledNETCoreAppPackageVersion)" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="AngleSharp.Browser.Tests" Key="002400000480000094000000060200000024000052534131000400000100010001adf274fa2b375134e8e4558d606f1a0f96f5cd0c6b99970f7cce9887477209d7c29f814e2508d8bd2526e99e8cd273bd1158a3984f1ea74830ec5329a77c6ff201a15edeb8b36ab046abd1bce211fe8dbb076d7d806f46b15bfda44def04ead0669971e96c5f666c9eda677f28824fff7aa90d32929ed91d529a7a41699893" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="AngleSharp" Version="1.10.5" />
-    <PackageReference Include="AngleSharp.Js" Version="1.2.2" />
-    <PackageReference Include="AngleSharp.Css" Version="1.5.0" />
-    <PackageReference Include="AngleSharp.Io" Version="1.3.3" />
-    <PackageReference Include="AngleSharp.Wasm" Version="1.1.1" />
-    <PackageReference Include="AngleSharp.Xml" Version="1.3.0" />
-    <PackageReference Include="AngleSharp.Renderer" Version="0.12.0" />
+    <PackageReference Include="AngleSharp" Version="1.11.0" />
+    <PackageReference Include="AngleSharp.Js" Version="1.3.0" />
+    <PackageReference Include="AngleSharp.Css" Version="1.6.0" />
+    <PackageReference Include="AngleSharp.Io" Version="1.4.0" />
+    <PackageReference Include="AngleSharp.Wasm" Version="1.2.0" />
+    <PackageReference Include="AngleSharp.Xml" Version="1.4.0" />
+    <PackageReference Include="AngleSharp.Renderer" Version="0.13.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -33,5 +52,15 @@
     <!-- AngleSharp.Renderer is built against SkiaSharp 2.88, but works with 3.x; align with the version Avalonia uses -->
     <PackageReference Include="SkiaSharp" Version="4.156.1" />
     <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.156.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.InteropServices.ComVisibleAttribute">
+      <_Parameter1>false</_Parameter1>
+    </AssemblyAttribute>
+    <!-- the DOM of this library for a scripting engine, without reflection: RendererDom.Register -->
+    <AssemblyAttribute Include="AngleSharp.Attributes.GenerateDomRegistrationAttribute">
+      <_Parameter1>AngleSharp.Browser.BrowserDom</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 </Project>

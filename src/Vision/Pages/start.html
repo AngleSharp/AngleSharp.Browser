@@ -11,34 +11,62 @@ body {
   background: var(--surface);
 }
 
-.page {
-  max-width: 880px;
-  margin: 0 auto;
-  padding: 36px 24px 24px;
-}
-
-.intro {
-  margin-bottom: 24px;
+.hero {
+  padding: 40px 24px 76px;
+  background: #0b57d0;
+  background: linear-gradient(135deg, #0b57d0 0%, #5b3fd6 55%, #a142c7 100%);
+  color: #ffffff;
   text-align: center;
 }
 
-.intro h1 {
-  font-size: 28px;
-  font-weight: 500;
+.hero .logo {
+  display: inline-block;
+  border-radius: 18px;
+  box-shadow: 0 8px 24px rgba(20, 10, 80, 0.35);
 }
 
-.intro p {
-  margin: 4px 0 0;
+.hero .logo img {
+  display: block;
+  width: 72px;
+  height: 72px;
+}
+
+.hero h1 {
+  margin-top: 14px;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.hero p {
+  margin: 6px 0 0;
+  color: #e4e1ff;
+  font-size: 14px;
+}
+
+.page {
+  max-width: 852px;
+  margin: -48px auto 0;
+  padding: 0 24px 32px;
 }
 
 .section {
-  margin-bottom: 24px;
+  margin-bottom: 20px;
+  padding: 20px 20px 8px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--bg);
+  box-shadow: 0 2px 10px rgba(32, 33, 36, 0.08);
 }
 
 .section h2 {
-  margin-bottom: 10px;
-  color: var(--accent);
-  font-size: 13px;
+  font-size: 15px;
+}
+
+.section .hint {
+  margin: 2px 0 14px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .tiles {
@@ -50,31 +78,33 @@ body {
 .tile {
   display: flex;
   box-sizing: border-box;
-  width: 268px;
+  width: 262px;
   margin: 0 6px 12px;
   padding: 14px;
   border: 1px solid var(--border);
   border-radius: 14px;
-  background: var(--bg);
+  background: var(--surface);
   color: var(--text);
 }
 
 .tile:hover {
   border-color: var(--accent);
   background: var(--accent-soft);
+  box-shadow: 0 4px 14px rgba(11, 87, 208, 0.18);
 }
 
 .tile .letter {
   display: block;
   flex: none;
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   margin-right: 12px;
-  border-radius: 18px;
+  border-radius: 12px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
   color: #ffffff;
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
-  line-height: 36px;
+  line-height: 40px;
   text-align: center;
 }
 
@@ -110,7 +140,7 @@ body {
 }
 
 .section .empty {
-  margin: 0;
+  margin: 0 0 12px;
   padding: 18px;
   border: 1px dashed var(--border);
   border-radius: 14px;
@@ -119,24 +149,28 @@ body {
 </style>
 </head>
 <body>
-  <div class="page">
-    <div class="intro">
-      <h1>Vision</h1>
-      <p class="muted">A browser made of AngleSharp. Type an address above, or pick a page to start with.</p>
-    </div>
+  <div class="hero">
+    <div class="logo"><img src="{{logo}}" alt="Vision logo"></div>
+    <h1>Vision</h1>
+    <p>A browser made of AngleSharp. Type an address above, or pick a page to start with.</p>
+  </div>
 
+  <div class="page">
     <div class="section">
       <h2>Most visited</h2>
+      <p class="hint">The pages you come back to.</p>
       <div class="tiles" id="most-visited">{{most-visited}}</div>
     </div>
 
     <div class="section">
       <h2>Demos</h2>
+      <p class="hint">Sites showing what the engine can do.</p>
       <div class="tiles" id="demos">{{demos}}</div>
     </div>
 
     <div class="section">
       <h2>Vision</h2>
+      <p class="hint">The tools and settings of this browser.</p>
       <div class="tiles" id="pages">{{pages}}</div>
     </div>
   </div>

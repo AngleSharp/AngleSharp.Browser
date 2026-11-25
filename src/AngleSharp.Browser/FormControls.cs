@@ -27,7 +27,8 @@ static class FormControls
 
     /// <summary>
     /// The control of a label: the one its `for` attribute names, else its first labelable
-    /// descendant (HTML 4.10.4). AngleSharp only knows the former so far.
+    /// descendant (HTML 4.10.4). AngleSharp only knows the former before 1.11 (remove this once
+    /// referenced).
     /// </summary>
     public static IElement? GetLabeledControl(IHtmlLabelElement label)
     {

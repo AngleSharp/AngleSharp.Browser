@@ -22,6 +22,8 @@ using AngleSharp.Media;
 using AngleSharp.Renderer;
 using AngleSharp.Scripting;
 using AngleSharp.Renderer.Rendering;
+using AngleSharp.Wasm;
+using AngleSharp.Xml;
 
 /// <summary>
 /// A UI-agnostic browser: it loads documents, paints the active document
@@ -68,6 +70,7 @@ public sealed partial class BrowserEngine : IDisposable
     private readonly IEventLoop? _loop;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly NavigationHistory _history = new();
+    private readonly VisitedLinks _visited = new();
     private readonly BrowserDiagnostics _diagnostics = new();
     private readonly MediaHost _media;
     private readonly Timer _heartbeat;
@@ -91,6 +94,11 @@ public sealed partial class BrowserEngine : IDisposable
     private volatile bool _isPainting;
     private volatile bool _isDisposed;
 
+    // A browser serializes colors as CSSOM says (e.g. getComputedStyle gives "rgb(0, 128, 0)"
+    // for an opaque color), while AngleSharp.Css keeps "rgba(0, 128, 0, 1)" for its library
+    // users unless asked to. The switch is process-wide, which a browser process is.
+    static BrowserEngine() => AngleSharp.Css.Values.CssColorValue.UseSpecSerialization = true;
+
     /// <summary>
     /// Creates a new browser engine.
     /// </summary>
@@ -109,11 +117,14 @@ public sealed partial class BrowserEngine : IDisposable
         _options = options;
         _media = new MediaHost(options);
         _media.Changed += OnMediaChanged;
+        _fullscreen = new Fullscreen(() => _media.HasUserActivation, OnFullscreenChanged);
 
         _device = new DefaultRenderDevice
         {
             Category = DeviceCategory.Screen,
             ColorBits = 32,
+            // a color screen has no monochrome bits (the default of 16 makes (max-monochrome: 0) fail)
+            MonochromeBits = 0,
             DeviceWidth = options.ScreenWidth,
             DeviceHeight = options.ScreenHeight,
             ViewPortWidth = Math.Max(1, options.ViewportWidth),
@@ -138,8 +149,30 @@ public sealed partial class BrowserEngine : IDisposable
             // one loop for the page and its iframes: scripts of all of them run on it, and the
             // layout of the page holds it, as the DOM of an iframe is part of what it lays out
             .WithEventLoop(context => _eventLoop is null ? _eventLoop = new JsEventLoop(context) : new FrameEventLoop(_eventLoop))
-            .WithRenderDevice(_device)
+            // the document of an iframe has a viewport of its own (the renderer sizes it), which its
+            // media queries see as well
+            .WithOnly<IRenderDevice>(context => context.Parent is null ? _device : CreateFrameDevice(context, _device))
+            // shows responses that aren't documents (e.g. images) like a browser; before the
+            // extensions, which register their creators at it (e.g. XML and SVG)
+            .WithOnly<IDocumentFactory>(new BrowserDocumentFactory())
             .WithXml()
+            // an XML document that isn't well-formed shows the error instead of failing to load
+            .With(new ParseErrorDocuments())
+            // links to pages shown before match :visited (before the CSS extension wraps the selectors)
+            .WithOnly(_visited.CreateSelectors(() => _context?.Active))
+            .With(_fullscreen)
+            .WithOnly<IHtmlParser>(context =>
+            {
+                var parser = new HtmlParser(new HtmlParserOptions { IsScripting = context.IsScripting() }, context);
+                parser.Parsing += (_, ev) =>
+                {
+                    if (ev is AngleSharp.Html.Dom.Events.HtmlParseEvent { Document: { } document })
+                    {
+                        _visited.Record(document, TopLevelOf(context)?.Active);
+                    }
+                };
+                return parser;
+            })
             .WithCss()
             .WithIo(ioOptions)
             .WithCookies(_cookies)
@@ -156,7 +189,17 @@ public sealed partial class BrowserEngine : IDisposable
         {
             config = config
                 .WithConsoleLogger(_ => new BrowserDiagnostics.ConsoleLogger(_diagnostics))
-                .WithJs();
+                .WithJs(DomRegistrations.Combine(
+                    CssDom.Register,
+                    IoDom.Register,
+                    WasmDom.Register,
+                    RendererDom.Register,
+                    XmlDom.Register,
+                    BrowserDom.Register,
+                    // what the generated registrations above miss
+                    UpstreamDom.Register))
+                // the modules of paint worklets (CSS.paintWorklet.addModule)
+                .With<AngleSharp.Css.Painting.IPaintWorkletModuleLoader>(_ => new PaintWorklets(OnPaintWorkletChanged));
         }
 
         // the top-level context shares the engine's history (window.history), frames get their own
@@ -201,6 +244,8 @@ public sealed partial class BrowserEngine : IDisposable
             };
             requester.Requested += (_, ev) => _diagnostics.OnRequested(((RequestEvent)ev).Request, ((RequestEvent)ev).Response);
         }
+
+        _context.GetService<ICssDefaultStyleSheetProvider>()?.AppendDefault(Fullscreen.DefaultStyle);
 
         if (options.IsScriptingEnabled)
         {
@@ -248,6 +293,30 @@ public sealed partial class BrowserEngine : IDisposable
         _harness.PaintInvalidated += OnPaintInvalidated;
         _heartbeat = new Timer(OnHeartbeat, null, HeartbeatInterval, HeartbeatInterval);
         _imageFrameTimer = new Timer(OnImageFrameDue);
+    }
+
+    private static DefaultRenderDevice CreateFrameDevice(IBrowsingContext context, DefaultRenderDevice device) => new FrameRenderDevice(context)
+    {
+        Category = device.Category,
+        ColorBits = device.ColorBits,
+        MonochromeBits = device.MonochromeBits,
+        DeviceWidth = 300,
+        DeviceHeight = 150,
+        ViewPortWidth = 300,
+        ViewPortHeight = 150,
+        FontSize = device.FontSize,
+        IsScripting = device.IsScripting,
+        Preferences = device.Preferences,
+    };
+
+    private static IBrowsingContext? TopLevelOf(IBrowsingContext? context)
+    {
+        while (context?.Parent is { } parent)
+        {
+            context = parent;
+        }
+
+        return context;
     }
 
     /// <summary>
@@ -304,6 +373,25 @@ public sealed partial class BrowserEngine : IDisposable
     /// Gets the currently displayed document, if any.
     /// </summary>
     public IDocument? Document => _document;
+
+    /// <summary>
+    /// Gets if the page shows an element fullscreen (Fullscreen API), which the host shows
+    /// fullscreen as well. See <see cref="FullscreenChanged"/>.
+    /// </summary>
+    public bool IsFullscreen => _isFullscreen;
+
+    /// <summary>
+    /// Raised when the page starts or ends showing an element fullscreen (see
+    /// <see cref="IsFullscreen"/>). Raised on the engine's thread.
+    /// </summary>
+    public event EventHandler? FullscreenChanged;
+
+    /// <summary>
+    /// Ends showing an element of the page fullscreen, e.g. when the host leaves its own
+    /// fullscreen mode.
+    /// </summary>
+    /// <returns>The task finishing once it ended.</returns>
+    public Task ExitFullscreenAsync() => InvokeAsync(document => _fullscreen.ExitAll(document));
 
     /// <summary>
     /// Gets the address of the currently displayed document, or the address being navigated
@@ -741,6 +829,8 @@ public sealed partial class BrowserEngine : IDisposable
             _pressed = null;
             _seekingMedia = null;
             _focusedFrameDocument = null;
+            // a document that was left shows nothing fullscreen anymore
+            OnFullscreenChanged(false);
             _hoveredFrames.Clear();
             _pointerFrame = null;
             _wasReadyForLayout = false;
@@ -752,6 +842,7 @@ public sealed partial class BrowserEngine : IDisposable
             if (active is not null)
             {
                 _history.Push(active.Url, active);
+                _pendingFragmentDocument = active.Url.Contains('#') ? active : null;
                 _diagnostics.OnDocumentChanged(active.Url);
             }
 

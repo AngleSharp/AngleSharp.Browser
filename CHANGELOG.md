@@ -1,3 +1,28 @@
+# 0.3.0
+
+Released on Tuesday, November 24 2026.
+
+- Fixed Home, End and the arrow keys doing nothing in text fields; they move the cursor (with Shift selecting text), which typing, Backspace and Delete edit at, like in browsers
+- Fixed a page loaded with a fragment (e.g. `acid2.html#top`) not being scrolled to the element it names
+- Fixed the rendering of the Acid2 test
+- Fixed the media queries of an iframe's document not seeing its viewport, also right after a script resized the iframe
+- Fixed `(max-monochrome: 0)` and the like not matching
+- Fixed a navigated image (e.g. a PNG in an iframe) being parsed as HTML; like in browsers it is shown in a document of its own
+- Fixed a navigated XML document that isn't well-formed failing to load (e.g. in an iframe, without a `load` event); like in browsers it shows the error as a `parsererror` element
+- Fixed clicking a `select` or `textarea` inside a `label` crashing the browser (endless recursion)
+- Fixed the events of the user (e.g. clicks and keys) not being trusted (`isTrusted`)
+- Fixed images showing the first candidate of their `srcset` (e.g. pixelated, scaled up); they show the one fitting their `sizes`, the device pixel ratio and the media of a `picture`'s sources, are as large as their density says (e.g. `2x`), and are only loaded once shown (or right away when not in the page, e.g. `new Image()`); `loading=lazy` images load once scrolled near
+- Improved the design of Vision's start page, which shows the six most visited pages and HTML5test as a demo
+- Updated the default user agent to name the engine (e.g. `Mozilla/5.0 (X11; Linux x86_64) AngleSharp.Browser/0.3`)
+- Updated colors to be serialized as CSSOM says, e.g. `getComputedStyle` gives `rgb(0, 128, 0)` instead of `rgba(0, 128, 0, 1)` (`CssColorValue.UseSpecSerialization`, set process-wide)
+- Added `:visited` to links to pages shown before (partitioned by the site of the page, so pages can't learn of the history elsewhere)
+- Added dragging sliders (`input[type=range]`) and changing them with the keyboard
+- Added buttons with `popovertarget` showing, hiding or toggling their popover, and light dismiss of popovers (a press outside or Esc)
+- Added paint worklets (`CSS.paintWorklet.addModule()` with `registerPaint`), whose `paint()` images backgrounds show
+- Added the Fullscreen API: `requestFullscreen()` (after a press or a key), `document.exitFullscreen()`, `fullscreenElement` and `fullscreenEnabled`, with `fullscreenchange` events and Esc ending it; the engine raises `FullscreenChanged`, and Vision shows the page fullscreen meanwhile
+- Added WebAssembly as in browsers (AngleSharp.Wasm with AngleSharp.Js): `WebAssembly.instantiate`/`instantiateStreaming` with import objects of scripts, exports scripts call, and `memory.buffer` sharing the memory; before, `WebAssembly` was undefined
+- Added `crypto.subtle` (AngleSharp.Js)
+
 # 0.2.0
 
 Released on Wednesday, November 18 2026.

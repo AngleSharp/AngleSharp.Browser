@@ -183,6 +183,7 @@ partial class BrowserEngine
             var hit = HitTest(x, y);
             var target = ResolveListBoxTarget(hit, x, y);
             _pressed = target;
+            LightDismissPopovers(hit ?? _document?.DocumentElement);
 
             if (target is not null)
             {
@@ -204,6 +205,9 @@ partial class BrowserEngine
                         ShowSelectPopup((IHtmlSelectElement)target);
                     }
                     else if (PressMediaControls(target, x, y))
+                    {
+                    }
+                    else if (PressRange(target, x))
                     {
                     }
                     else if (!IsDropdown(target))
@@ -254,6 +258,7 @@ partial class BrowserEngine
 
             EndTextSelection();
             _seekingMedia = null;
+            ReleaseRange();
             var target = ResolveListBoxTarget(HitTest(x, y), x, y);
             var pressed = _pressed;
             _pressed = null;
@@ -501,6 +506,7 @@ partial class BrowserEngine
         if (isMove)
         {
             SeekMedia(x);
+            SlideRange(x);
         }
 
         if (element is not null && isMove)
@@ -718,6 +724,11 @@ partial class BrowserEngine
     /// </summary>
     private Task? Activate(IElement? element, double x, double y, InputModifiers modifiers)
     {
+        if (element is not null && ActivatePopoverTarget(element))
+        {
+            return null;
+        }
+
         switch (element)
         {
             case IHtmlInputElement input when FormControls.IsToggle(input):
@@ -889,6 +900,26 @@ partial class BrowserEngine
             return null;
         }
 
+        if (HandleRangeKey(focused, key))
+        {
+            return null;
+        }
+
+        if (key == "Escape" && ExitFullscreenOnEscape())
+        {
+            return null;
+        }
+
+        if (key == "Escape" && CloseLastPopover())
+        {
+            return null;
+        }
+
+        if (isTextEntry && HandleTextEntryKey(focused!, key, modifiers))
+        {
+            return null;
+        }
+
         switch (key)
         {
             case "a" or "A" when !isTextEntry && (modifiers.HasFlag(InputModifiers.Control) || modifiers.HasFlag(InputModifiers.Meta)):
@@ -905,16 +936,6 @@ partial class BrowserEngine
             case "Enter" when focused is IHtmlAnchorElement or IHtmlButtonElement:
             case " " when focused is IHtmlButtonElement || FormControls.IsToggle(focused):
                 return Click(focused!, 0, 0, modifiers);
-            case "Backspace" when isTextEntry:
-                var value = FormControls.GetValue(focused!);
-
-                if (value.Length > 0)
-                {
-                    FormControls.SetValue(focused!, value[..^1]);
-                    Fire(focused!, new Event("input", true, false));
-                }
-
-                return null;
             case "ArrowUp" or "ArrowDown" when focused is IHtmlSelectElement listBox && listBox.IsListBox():
                 if (StepListBox(listBox, key == "ArrowUp" ? -1 : 1, modifiers))
                 {
@@ -957,22 +978,6 @@ partial class BrowserEngine
         return document?.ActiveElement ?? document?.Body ?? document?.DocumentElement;
     }
 
-    private void InsertText(IElement element, string text)
-    {
-        if (element is IHtmlInputElement input)
-        {
-            text = text.Replace("\r", string.Empty).Replace("\n", string.Empty);
-            var room = input.MaxLength >= 0 ? input.MaxLength - input.Value.Length : int.MaxValue;
-            text = text.Length > room ? text[..Math.Max(0, room)] : text;
-        }
-
-        if (text.Length > 0)
-        {
-            FormControls.SetValue(element, FormControls.GetValue(element) + text);
-            Fire(element, new Event("input", true, false));
-        }
-    }
-
     private void UpdateFocus(IElement target)
     {
         var focusable = target.ParentElement is null ? null : (IElement?)target;
@@ -990,6 +995,7 @@ partial class BrowserEngine
             {
                 (current as IHtmlElement)?.DoBlur();
                 element.DoFocus();
+                PlaceCursorOnFocus(element, selectAll: false);
             }
             else
             {
@@ -1019,6 +1025,8 @@ partial class BrowserEngine
                 : (current + direction + candidates.Count) % candidates.Count;
             var previous = document.ActiveElement;
             (candidates[next] as IHtmlElement)?.DoFocus();
+            // like in browsers, tabbing into a text input selects its text
+            PlaceCursorOnFocus(candidates[next], selectAll: candidates[next] is IHtmlInputElement);
             NotifyStateChanged(previous);
             NotifyStateChanged(candidates[next]);
         }
@@ -1139,8 +1147,9 @@ partial class BrowserEngine
     {
         try
         {
-            // the return value of Dispatch is inverted in some AngleSharp versions
-            target.Dispatch(ev);
+            // what the user does is trusted, and the engine acts on it itself (Activate);
+            // a script's dispatchEvent (Dispatch) would have AngleSharp act on clicks as well
+            EventTargetExtensions.Fire(target, ev);
             return !ev.IsDefaultPrevented;
         }
         catch (Exception ex)
@@ -1264,6 +1273,9 @@ partial class BrowserEngine
             {
                 case IHtmlAnchorElement or IHtmlAreaElement when element.HasAttribute("href"):
                 case IHtmlButtonElement or IHtmlInputElement or IHtmlLabelElement or IHtmlElement { LocalName: "summary" }:
+                // a control has no activation of its own, but its label must not get the click
+                // either: that would click the control (in the label) again (HTML 4.10.4)
+                case IHtmlSelectElement or IHtmlTextAreaElement:
                     return element;
             }
         }

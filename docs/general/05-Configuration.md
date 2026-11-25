@@ -11,7 +11,7 @@ Everything that touches the outside world is configured via `BrowserOptions`, wh
 | Option | Default | Description |
 | --- | --- | --- |
 | `ProfileDirectory` | `null` | Where cookies, web storage and the HTTP cache are persisted; `null` keeps everything in memory. |
-| `UserAgent` | `null` | The user agent to report; `null` uses the default of AngleSharp.Io. |
+| `UserAgent` | `null` | The user agent to report; `null` uses `BrowserOptions.DefaultUserAgent`, e.g. `Mozilla/5.0 (X11; Linux x86_64) AngleSharp.Browser/0.3`. It names the engine rather than claiming to be Chrome: bot protections (e.g. Cloudflare's) refuse a browser claiming to be Chrome that doesn't behave like it in every detail. |
 | `DefaultHeaders` | empty | Headers added to every request, unless a request sets them already. |
 | `ColorScheme` | `null` | The answer to `prefers-color-scheme`, e.g., `light` or `dark`. |
 | `IsScriptingEnabled` | `true` | If JavaScript should be evaluated. |
